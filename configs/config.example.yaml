@@ -8,7 +8,7 @@ http:
   shutdown_timeout: 15s
 database:
   # 连接会被强制设置 parseTime=true、loc=UTC、time_zone='+00:00'
-  dsn: "glassjob_center:<password>@tcp(127.0.0.1:3306)/glassjob_center"
+  dsn: "job_center:<password>@tcp(127.0.0.1:3307)/job_center"
   max_open_conns: 50
   max_idle_conns: 10
   conn_max_lifetime: 30m

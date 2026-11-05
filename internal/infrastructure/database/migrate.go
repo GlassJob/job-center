@@ -65,10 +65,10 @@ func MigrateUp(ctx context.Context, dsn string, fsys fs.FS, log *slog.Logger) ([
 	}
 	defer conn.Close()
 	var got sql.NullInt64
-	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK('glassjob_center_migrate', 60)").Scan(&got); err != nil || !got.Valid || got.Int64 != 1 {
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK('job_center_migrate', 60)").Scan(&got); err != nil || !got.Valid || got.Int64 != 1 {
 		return nil, fmt.Errorf("acquire migration lock: %v", err)
 	}
-	defer conn.ExecContext(context.Background(), "DO RELEASE_LOCK('glassjob_center_migrate')")
+	defer conn.ExecContext(context.Background(), "DO RELEASE_LOCK('job_center_migrate')")
 
 	applied, err := appliedVersions(ctx, conn)
 	if err != nil {

@@ -14,13 +14,13 @@ database: {dsn: "u:p@tcp(h:1)/db"}
 security: {credential_pepper: "0123456789abcdef"}
 instance: {heartbeat_interval: 2s, suspect_after: 6s, offline_after: 20s, sweep_interval: 1s}
 `), 0o600)
-	t.Setenv("JC_DB_DSN", "env:pw@tcp(127.0.0.1:3307)/glassjob_center")
+	t.Setenv("JC_DB_DSN", "env:pw@tcp(127.0.0.1:3307)/job_center")
 	t.Setenv("JC_ADMIN_CLIENT_SECRETS", "glassadmin:aaaaaaaaaaaaaaaa,deployer:bbbbbbbbbbbbbbbb")
 	c, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Database.DSN != "env:pw@tcp(127.0.0.1:3307)/glassjob_center" {
+	if c.Database.DSN != "env:pw@tcp(127.0.0.1:3307)/job_center" {
 		t.Errorf("env override failed: %s", c.Database.DSN)
 	}
 	if c.Instance.SuspectAfter.D() != 6*time.Second || c.WebSocket.AuthTimeout.D() != 5*time.Second {

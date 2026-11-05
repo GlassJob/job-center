@@ -14,7 +14,6 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
       GJ_CENTER_PASSWORD: ${GJ_CENTER_PASSWORD:?set in .env}
       GJ_ADMIN_PASSWORD: ${GJ_ADMIN_PASSWORD:?set in .env}
-      GJ_ADMIN_BIZ_PASSWORD: ${GJ_ADMIN_BIZ_PASSWORD:?set in .env}
     command: ["--default-time-zone=+00:00", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
     volumes:
       - mysql-data:/var/lib/mysql
@@ -31,7 +30,7 @@ services:
       mysql: {condition: service_healthy}
     environment:
       <<: *tz
-      JC_DB_DSN: "glassjob_center:${GJ_CENTER_PASSWORD}@tcp(mysql:3306)/glassjob_center?parseTime=true&loc=UTC"
+      JC_DB_DSN: "job_center:${GJ_CENTER_PASSWORD}@tcp(mysql:3306)/job_center?parseTime=true&loc=UTC"
       JC_CREDENTIAL_PEPPER: ${JC_CREDENTIAL_PEPPER:?set in .env}
       JC_ADMIN_CLIENT_SECRETS: "glassadmin:${JC_GLASSADMIN_SECRET},deployer:${JC_DEPLOYER_SECRET}"
       JC_HTTP_EXECUTOR_ADDR: ":8080"
@@ -50,12 +49,9 @@ services:
     environment:
       <<: *tz
       DB_HOST: mysql
-      DB_NAME: glassjob_admin
-      DB_USER: glassjob_admin
+      DB_NAME: job_admin
+      DB_USER: job_admin
       DB_PASS: ${GJ_ADMIN_PASSWORD}
-      BIZ_DB_NAME: glassjob_admin_biz
-      BIZ_DB_USER: glassjob_admin_biz
-      BIZ_DB_PASS: ${GJ_ADMIN_BIZ_PASSWORD}
       JOB_CENTER_BASE_URL: http://job-center:8081
       JOB_CENTER_CLIENT_ID: glassadmin
       JOB_CENTER_CLIENT_SECRET: ${JC_GLASSADMIN_SECRET}

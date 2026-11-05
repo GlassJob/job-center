@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS `job_execution_attempt` (
   `progress_percent`    DECIMAL(5,2) NULL,
   `progress_message`    VARCHAR(500) NULL,
   `progress_updated_at` DATETIME(3) NULL,
-  `cancel_state`        VARCHAR(16) CHARACTER SET ascii NOT NULL DEFAULT 'NONE' COMMENT 'NONE|REQUESTED|SENT|ACKED|STOPPED|FAILED',
+  `cancel_state`        VARCHAR(24) CHARACTER SET ascii NOT NULL DEFAULT 'NONE' COMMENT 'NONE|REQUESTED|SENT|ACKED|STOPPED|FAILED|CANCEL_UNCONFIRMED（租约过期仍未收到 task.cancelled）',
   `cancel_requested_at` DATETIME(3) NULL,
   `cancel_acked_at`     DATETIME(3) NULL,
   `exit_code`           INT NULL,
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS `job_execution_attempt` (
   KEY `idx_task_created` (`task_id`, `created_at`),
   KEY `idx_created` (`created_at`),
   CONSTRAINT `ck_att_status` CHECK (`status` IN ('CREATED','DISPATCHING','ACKNOWLEDGED','RUNNING','SUCCEEDED','FAILED','CANCELLED','TIMED_OUT','LOST')),
-  CONSTRAINT `ck_att_cancel` CHECK (`cancel_state` IN ('NONE','REQUESTED','SENT','ACKED','STOPPED','FAILED')),
+  CONSTRAINT `ck_att_cancel` CHECK (`cancel_state` IN ('NONE','REQUESTED','SENT','ACKED','STOPPED','FAILED','CANCEL_UNCONFIRMED')),
   CONSTRAINT `ck_att_progress` CHECK (`progress_percent` IS NULL OR (`progress_percent` >= 0 AND `progress_percent` <= 100))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='执行尝试';
 
