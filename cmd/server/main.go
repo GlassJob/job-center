@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlassJob/job-center/internal/application/catalog"
 	appexec "github.com/GlassJob/job-center/internal/application/execution"
+	"github.com/GlassJob/job-center/internal/application/scheduler"
 	"github.com/GlassJob/job-center/internal/application/monitoring"
 	"github.com/GlassJob/job-center/internal/application/registration"
 	"github.com/GlassJob/job-center/internal/config"
@@ -87,6 +88,19 @@ func run() error {
 	execSvc := appexec.New(store, ws.Hub(), leaseTTL, log)
 	ws.SetExecution(execSvc)
 	api.SetExecution(execSvc)
+
+	startedAt := time.Now().UTC()
+	sch := scheduler.New(store, scheduler.Options{
+		NodeID: cfg.NodeID, TickInterval: cfg.Scheduler.TickInterval.D(), LeaseTTL: cfg.Scheduler.LeaseTTL.D(),
+		DefaultLocation: loc, BatchSize: 200,
+	}, log)
+	go sch.Run(ctx)
+	rt := appexec.NewRuntime(execSvc, appexec.RuntimeOptions{
+		NodeID: cfg.NodeID, SweepInterval: 5 * time.Second, LeaseTTL: leaseTTL,
+		LostGrace: cfg.Scheduler.LostGrace.D(), TimeoutGrace: cfg.Scheduler.TimeoutGrace.D(),
+		DispatchInterval: time.Second, StartedAt: startedAt,
+	})
+	go rt.Run(ctx)
 
 	execMux := http.NewServeMux()
 	api.MountExecutor(execMux)

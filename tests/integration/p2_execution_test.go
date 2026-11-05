@@ -182,13 +182,13 @@ func TestP2ManualExecutionLoop(t *testing.T) {
 		}
 		var detail struct {
 			Data struct {
-				Execution map[string]any   `json:"execution"`
-				Attempts  []map[string]any `json:"attempts"`
+				Status   string           `json:"status"`
+				Attempts []map[string]any `json:"attempts"`
 			} `json:"data"`
 		}
 		_ = json.Unmarshal([]byte(body), &detail)
-		if detail.Data.Execution["status"] != "SUCCEEDED" {
-			t.Fatalf("exec status=%v body=%s", detail.Data.Execution["status"], body)
+		if detail.Data.Status != "SUCCEEDED" {
+			t.Fatalf("exec status=%v body=%s", detail.Data.Status, body)
 		}
 		if len(detail.Data.Attempts) != 1 || detail.Data.Attempts[0]["status"] != "SUCCEEDED" {
 			t.Fatalf("attempts=%v", detail.Data.Attempts)
@@ -250,13 +250,13 @@ func TestP2ManualExecutionLoop(t *testing.T) {
 		}
 		var detail struct {
 			Data struct {
-				Execution map[string]any   `json:"execution"`
-				Attempts  []map[string]any `json:"attempts"`
+				Status   string           `json:"status"`
+				Attempts []map[string]any `json:"attempts"`
 			} `json:"data"`
 		}
 		_ = json.Unmarshal([]byte(body), &detail)
-		if detail.Data.Execution["status"] != "TIMED_OUT" {
-			t.Fatalf("want TIMED_OUT got %v %s", detail.Data.Execution["status"], body)
+		if detail.Data.Status != "TIMED_OUT" {
+			t.Fatalf("want TIMED_OUT got %v %s", detail.Data.Status, body)
 		}
 		if detail.Data.Attempts[0]["cancel_state"] != "CANCEL_UNCONFIRMED" {
 			t.Fatalf("cancel_state=%v", detail.Data.Attempts[0]["cancel_state"])
@@ -299,12 +299,12 @@ func TestP2ManualExecutionLoop(t *testing.T) {
 		code, body = signedJSON(t, http.MethodGet, adminBase+"/v1/admin/executions/"+env.Data.ExecutionID, nil, "", secret, []string{"job.execution.view"}, false)
 		var detail struct {
 			Data struct {
-				Execution map[string]any `json:"execution"`
+				Status string `json:"status"`
 			} `json:"data"`
 		}
 		_ = json.Unmarshal([]byte(body), &detail)
-		if detail.Data.Execution["status"] != "CANCELLED" {
-			t.Fatalf("status=%v body=%s", detail.Data.Execution["status"], body)
+		if detail.Data.Status != "CANCELLED" {
+			t.Fatalf("status=%v body=%s", detail.Data.Status, body)
 		}
 	})
 

@@ -76,7 +76,11 @@ type Config struct {
 	} `yaml:"instance"`
 	Scheduler struct {
 		// DefaultTimezone 为空 = Job Center 服务器本地时区（TZ 环境变量或 /etc/localtime）。
-		DefaultTimezone string `yaml:"default_timezone"`
+		DefaultTimezone string   `yaml:"default_timezone"`
+		TickInterval    Duration `yaml:"tick_interval"`
+		LeaseTTL        Duration `yaml:"lease_ttl"`
+		LostGrace       Duration `yaml:"lost_grace"`
+		TimeoutGrace    Duration `yaml:"timeout_grace"`
 	} `yaml:"scheduler"`
 	Log struct {
 		Level  string `yaml:"level"`
@@ -113,6 +117,10 @@ func Default() *Config {
 	c.Instance.SuspectAfter = Duration(30 * time.Second)
 	c.Instance.OfflineAfter = Duration(90 * time.Second)
 	c.Instance.SweepInterval = Duration(5 * time.Second)
+	c.Scheduler.TickInterval = Duration(time.Second)
+	c.Scheduler.LeaseTTL = Duration(15 * time.Second)
+	c.Scheduler.LostGrace = Duration(60 * time.Second)
+	c.Scheduler.TimeoutGrace = Duration(60 * time.Second)
 	c.Log.Level = "info"
 	c.Log.Format = "json"
 	return c

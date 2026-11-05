@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/apperr"
+	"github.com/GlassJob/job-center/internal/domain/schedule"
 	"github.com/GlassJob/job-center/internal/infrastructure/idgen"
 	"github.com/GlassJob/job-center/internal/infrastructure/security"
 	"github.com/GlassJob/job-center/internal/protocol"
@@ -273,6 +274,7 @@ func (s *Service) OnCompleted(ctx context.Context, sessInstance string, msg prot
 	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, status, "", finished, msg.Result, "", "", "")
 	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, "", finished, msg.Result, "", "")
 	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, status, "EXECUTOR", sessInstance, sessInstance, nil)
+	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
 }
 
@@ -294,12 +296,33 @@ func (s *Service) OnFailed(ctx context.Context, sessInstance string, msg protoco
 		cancelState = "CANCEL_UNCONFIRMED"
 	}
 	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, status, msg.Reason, finished, nil, msg.Error.Code, msg.Error.Message, cancelState)
-	execReason := msg.Reason
-	if cancelState == "CANCEL_UNCONFIRMED" {
-		execReason = "CANCEL_NOT_HONORED"
-	}
-	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, execReason, finished, nil, msg.Error.Code, msg.Error.Message)
 	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, status, "EXECUTOR", sessInstance, sessInstance, nil)
+
+	e, _ := s.store.Q().GetExecution(ctx, a.ExecutionID)
+	if e == nil {
+		return okAck(msg.AttemptID), nil
+	}
+	// cancel_state≠NONE：不重试
+	if cancelState == "CANCEL_UNCONFIRMED" {
+		_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, "CANCEL_NOT_HONORED", finished, nil, msg.Error.Code, msg.Error.Message)
+		s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
+		return okAck(msg.AttemptID), nil
+	}
+	rp := schedule.ParseRetryPolicy(e.RetryPolicy)
+	should := false
+	if status == "TIMED_OUT" {
+		should = rp.ShouldRetryTimeout(e.AttemptCount)
+	} else {
+		should = rp.ShouldRetryFailed(e.AttemptCount, msg.Reason, msg.Error.Code, nil)
+	}
+	if should {
+		delay := rp.Delay(e.AttemptCount)
+		_ = s.store.Q().ScheduleRetry(ctx, e.ExecutionID, time.Now().UTC().Add(delay), "RETRY_WAIT")
+		_ = s.store.Q().InsertEvent(ctx, e.ExecutionID, a.AttemptID, "EXECUTION_STATE", e.Status, "PENDING", "SYSTEM", "", "", map[string]any{"reason": "RETRY", "delay_ms": delay.Milliseconds()})
+		return okAck(msg.AttemptID), nil
+	}
+	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, msg.Reason, finished, nil, msg.Error.Code, msg.Error.Message)
+	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
 }
 
@@ -315,6 +338,7 @@ func (s *Service) OnCancelled(ctx context.Context, sessInstance string, msg prot
 	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, "CANCELLED", msg.StoppedBy, finished, nil, "", "", "STOPPED")
 	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, "CANCELLED", msg.StoppedBy, finished, nil, "", "")
 	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, "CANCELLED", "EXECUTOR", sessInstance, sessInstance, nil)
+	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
 }
 
@@ -398,6 +422,7 @@ func (s *Service) loadAndCheckLease(ctx context.Context, attemptID, token, sessI
 		return nil, err
 	}
 	if a.LeaseToken == nil || *a.LeaseToken != token {
+		_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, attemptID, "STALE_RESULT_REJECTED", a.Status, a.Status, "EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "lease_token mismatch"})
 		return nil, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "lease_token mismatch")
 	}
 	if a.InstanceID == nil || *a.InstanceID != sessInstance {
@@ -408,9 +433,23 @@ func (s *Service) loadAndCheckLease(ctx context.Context, attemptID, token, sessI
 		return nil, err
 	}
 	if e.CurrentAttemptID == nil || *e.CurrentAttemptID != attemptID {
+		_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, attemptID, "STALE_RESULT_REJECTED", a.Status, a.Status, "EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "stale attempt"})
 		return nil, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "stale attempt")
 	}
+	// 续租（心跳/进度/结果类消息）
+	_, _ = s.store.Q().RenewLease(ctx, attemptID, token, time.Now().UTC().Add(s.leaseTTL))
 	return a, nil
+}
+
+func (s *Service) wakeAfterTerminal(ctx context.Context, executionID string, taskID int64) {
+	slot, _ := s.store.Q().GetExecutionSlot(ctx, executionID)
+	slotKey := ""
+	if slot != nil {
+		slotKey = *slot
+	}
+	_ = s.store.InTx(ctx, func(q *repo.Queries) error {
+		return q.ReleaseSlotAndWake(ctx, executionID, taskID, slotKey)
+	})
 }
 
 func okAck(attemptID string) *protocol.TaskResultAck {

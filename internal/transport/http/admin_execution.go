@@ -93,7 +93,20 @@ func (s *Server) getExecution(w http.ResponseWriter, r *http.Request) {
 	if attempts == nil {
 		attempts = []*repo.Attempt{}
 	}
-	writeOK(w, r, http.StatusOK, map[string]any{"execution": e, "attempts": attempts})
+	// openapi ExecutionDetail = Execution fields + attempts（扁平，非 {execution,attempts}）
+	out := map[string]any{
+		"execution_id": e.ExecutionID, "task_id": e.TaskID, "service_id": e.ServiceID, "task_code": e.TaskCode,
+		"trigger_type": e.TriggerType, "triggered_by": e.TriggeredBy, "params": e.Params,
+		"idempotency_key": e.IdempotencyKey, "status": e.Status, "status_reason": e.StatusReason,
+		"handler_version": e.HandlerVersion, "handler_major": e.HandlerMajor, "schema_hash": e.SchemaHash,
+		"timeout_seconds": e.TimeoutSeconds, "retry_policy": e.RetryPolicy, "max_attempts": e.MaxAttempts,
+		"attempt_count": e.AttemptCount, "current_attempt_id": e.CurrentAttemptID,
+		"started_at": e.StartedAt, "finished_at": e.FinishedAt, "result": e.Result,
+		"error_code": e.ErrorCode, "error_message": e.ErrorMessage,
+		"created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
+		"attempts": attempts,
+	}
+	writeOK(w, r, http.StatusOK, out)
 }
 
 func (s *Server) postCancelExecution(w http.ResponseWriter, r *http.Request) {

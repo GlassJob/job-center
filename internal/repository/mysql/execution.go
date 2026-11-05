@@ -380,3 +380,179 @@ func (q *Queries) ListLogs(ctx context.Context, executionID, attemptID string, a
 	}
 	return items, next, rows.Err()
 }
+
+// RenewLease 续租（正确 lease_token + 非终态）。
+func (q *Queries) RenewLease(ctx context.Context, attemptID, token string, extendTo time.Time) (bool, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE job_execution_attempt SET lease_expires_at=GREATEST(COALESCE(lease_expires_at, ?), ?), last_heartbeat_at=UTC_TIMESTAMP(3)
+		WHERE attempt_id=? AND lease_token=? AND status IN ('DISPATCHING','ACKNOWLEDGED','RUNNING')`,
+		extendTo, extendTo, attemptID, token)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ListExpiredLeases 租约已过期的 Attempt。
+func (q *Queries) ListExpiredLeases(ctx context.Context, limit int) ([]*Attempt, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	rows, err := q.db.QueryContext(ctx, `SELECT attempt_id, execution_id, attempt_number, task_id, service_id, instance_id, hostname, git_commit, app_version,
+		handler_version, lease_token, lease_expires_at, status, status_reason, dispatch_count, dispatched_at, acked_at, started_at, finished_at, deadline_at,
+		progress_percent, progress_message, cancel_state, result, error_code, error_message, last_log_seq, created_at
+		FROM job_execution_attempt
+		WHERE status IN ('DISPATCHING','ACKNOWLEDGED','RUNNING') AND lease_expires_at IS NOT NULL AND lease_expires_at < UTC_TIMESTAMP(3)
+		ORDER BY lease_expires_at ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Attempt
+	for rows.Next() {
+		a, err := scanAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// MarkAttemptLost CAS → LOST。
+func (q *Queries) MarkAttemptLost(ctx context.Context, attemptID, reason string) (bool, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE job_execution_attempt SET status='LOST', status_reason=?, lost_at=UTC_TIMESTAMP(3), version=version+1
+		WHERE attempt_id=? AND status IN ('CREATED','DISPATCHING','ACKNOWLEDGED','RUNNING')`, reason, attemptID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ListLostReadyForRetry LOST 且超过 lost_grace、仍是当前 Attempt、Execution 非终态。
+func (q *Queries) ListLostReadyForRetry(ctx context.Context, lostGrace time.Duration, limit int) ([]*Attempt, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	rows, err := q.db.QueryContext(ctx, `SELECT a.attempt_id, a.execution_id, a.attempt_number, a.task_id, a.service_id, a.instance_id, a.hostname, a.git_commit, a.app_version,
+		a.handler_version, a.lease_token, a.lease_expires_at, a.status, a.status_reason, a.dispatch_count, a.dispatched_at, a.acked_at, a.started_at, a.finished_at, a.deadline_at,
+		a.progress_percent, a.progress_message, a.cancel_state, a.result, a.error_code, a.error_message, a.last_log_seq, a.created_at
+		FROM job_execution_attempt a
+		JOIN job_execution e ON e.execution_id=a.execution_id
+		WHERE a.status='LOST' AND a.lost_at IS NOT NULL
+		  AND a.lost_at <= DATE_SUB(UTC_TIMESTAMP(3), INTERVAL ? MICROSECOND)
+		  AND e.current_attempt_id=a.attempt_id
+		  AND e.status IN ('PENDING','RUNNING')
+		ORDER BY a.lost_at ASC LIMIT ?`, lostGrace.Microseconds(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Attempt
+	for rows.Next() {
+		a, err := scanAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListPastDeadline 超过 deadline 仍活跃的 Attempt。
+func (q *Queries) ListPastDeadline(ctx context.Context, limit int) ([]*Attempt, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	rows, err := q.db.QueryContext(ctx, `SELECT attempt_id, execution_id, attempt_number, task_id, service_id, instance_id, hostname, git_commit, app_version,
+		handler_version, lease_token, lease_expires_at, status, status_reason, dispatch_count, dispatched_at, acked_at, started_at, finished_at, deadline_at,
+		progress_percent, progress_message, cancel_state, result, error_code, error_message, last_log_seq, created_at
+		FROM job_execution_attempt
+		WHERE status IN ('DISPATCHING','ACKNOWLEDGED','RUNNING') AND deadline_at IS NOT NULL AND deadline_at < UTC_TIMESTAMP(3)
+		ORDER BY deadline_at ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Attempt
+	for rows.Next() {
+		a, err := scanAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ScheduleRetry Execution → PENDING(RETRY_WAIT)，清空 current_attempt 占用但保留历史。
+func (q *Queries) ScheduleRetry(ctx context.Context, executionID string, nextAttemptAt time.Time, reason string) error {
+	_, err := q.db.ExecContext(ctx, `UPDATE job_execution SET status='PENDING', status_reason=?, next_attempt_at=?, concurrency_slot=NULL, current_attempt_id=NULL, version=version+1
+		WHERE execution_id=? AND status IN ('PENDING','RUNNING')`, reason, nextAttemptAt.UTC(), executionID)
+	return err
+}
+
+// FinalizeExecutionAfterLost 不再重试时 FAILED(LOST)。
+func (q *Queries) FinalizeExecutionAfterLost(ctx context.Context, executionID, reason, errCode string) error {
+	return q.FinalizeExecution(ctx, executionID, "FAILED", reason, time.Now().UTC(), nil, errCode, reason)
+}
+
+// ListPendingDispatch 领取待派发。
+func (q *Queries) ListPendingDispatch(ctx context.Context, limit int) ([]*Execution, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
+		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
+		FROM job_execution
+		WHERE status='PENDING' AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP(3))
+		  AND current_attempt_id IS NULL
+		ORDER BY COALESCE(next_attempt_at, created_at) ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Execution
+	for rows.Next() {
+		e, err := scanExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ClearCurrentAttempt 重试前清除 current（新 Attempt 会重设）。
+func (q *Queries) ClearCurrentAttempt(ctx context.Context, executionID string) error {
+	_, err := q.db.ExecContext(ctx, `UPDATE job_execution SET current_attempt_id=NULL WHERE execution_id=?`, executionID)
+	return err
+}
+
+// GetExecutionSlot 取 concurrency_slot。
+func (q *Queries) GetExecutionSlot(ctx context.Context, executionID string) (*string, error) {
+	var slot sql.NullString
+	err := q.db.QueryRowContext(ctx, `SELECT concurrency_slot FROM job_execution WHERE execution_id=?`, executionID).Scan(&slot)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ptrStr(slot), nil
+}
+
+// ReleaseSlotAndWake 终态后清槽并唤醒排队。
+func (q *Queries) ReleaseSlotAndWake(ctx context.Context, executionID string, taskID int64, slot string) error {
+	_, err := q.db.ExecContext(ctx, `UPDATE job_execution SET concurrency_slot=NULL WHERE execution_id=?`, executionID)
+	if err != nil {
+		return err
+	}
+	if slot == "" {
+		return nil
+	}
+	_, err = q.WakeNextQueued(ctx, taskID, slot)
+	return err
+}
