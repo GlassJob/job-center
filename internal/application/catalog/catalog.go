@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -170,6 +171,60 @@ func (s *Service) ListCredentials(ctx context.Context, serviceID int64) ([]*repo
 		return nil, apperr.Storage(err)
 	}
 	return l, nil
+}
+
+type UpdateServiceInput struct {
+	ServiceName *string `json:"service_name"`
+	Description *string `json:"description"`
+	Status      *string `json:"status"`
+}
+
+func (s *Service) UpdateService(ctx context.Context, a Actor, id int64, in UpdateServiceInput) (*repo.Service, error) {
+	before, err := s.GetService(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if in.Status != nil && *in.Status != "ACTIVE" && *in.Status != "DISABLED" {
+		return nil, invalid("PARAMS_INVALID", "status must be ACTIVE or DISABLED")
+	}
+	if in.ServiceName != nil {
+		n := strings.TrimSpace(*in.ServiceName)
+		if n == "" || utf8.RuneCountInString(n) > 128 {
+			return nil, invalid("PARAMS_INVALID", "service_name required (≤128)")
+		}
+		in.ServiceName = &n
+	}
+	if in.Description != nil && utf8.RuneCountInString(*in.Description) > 1000 {
+		return nil, invalid("PARAMS_INVALID", "description ≤1000")
+	}
+	if err := s.store.Q().UpdateService(ctx, id, in.ServiceName, in.Description, in.Status); err != nil {
+		return nil, apperr.Storage(err)
+	}
+	after, err := s.GetService(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, a, "service.update", "job.credential.manage", "service", strconv.FormatInt(id, 10), before, after, nil)
+	return after, nil
+}
+
+func (s *Service) RevokeCredential(ctx context.Context, a Actor, keyID string) error {
+	cur, err := s.store.Q().GetCredentialByKeyID(ctx, keyID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return apperr.New(apperr.KindNotFound, "NOT_FOUND", "credential not found")
+	}
+	if err != nil {
+		return apperr.Storage(err)
+	}
+	n, err := s.store.Q().RevokeCredential(ctx, keyID)
+	if err != nil {
+		return apperr.Storage(err)
+	}
+	if n == 0 {
+		return apperr.New(apperr.KindConflict, "ALREADY_REVOKED", "credential already revoked")
+	}
+	s.audit(ctx, a, "credential.revoke", "job.credential.manage", "credential", keyID, cur, map[string]any{"status": "REVOKED"}, nil)
+	return nil
 }
 
 func (s *Service) ListInstances(ctx context.Context, f repo.InstanceFilter) ([]*repo.Instance, int, error) {

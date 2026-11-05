@@ -214,3 +214,60 @@ func (q *Queries) InsertAudit(ctx context.Context, a Audit) error {
 		nullStr(a.RequestID), nullStr(a.TraceID), nullStr(a.ClientIP), js(a.Before), js(a.After), a.Result, nullStr(a.ErrorMessage))
 	return err
 }
+
+func (q *Queries) UpdateService(ctx context.Context, id int64, name, desc, status *string) error {
+	cur, err := q.GetService(ctx, id)
+	if err != nil {
+		return err
+	}
+	n, d, st := cur.ServiceName, "", cur.Status
+	if cur.Description != nil {
+		d = *cur.Description
+	}
+	if name != nil {
+		n = *name
+	}
+	if desc != nil {
+		d = *desc
+	}
+	if status != nil {
+		st = *status
+	}
+	_, err = q.db.ExecContext(ctx, `UPDATE job_service SET service_name=?, description=?, status=? WHERE id=?`, n, nullStr(d), st, id)
+	return err
+}
+
+func (q *Queries) RevokeCredential(ctx context.Context, keyID string) (int64, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE job_service_credential SET status='REVOKED', revoked_at=UTC_TIMESTAMP(3) WHERE key_id=? AND status<>'REVOKED'`, keyID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (q *Queries) GetCredentialByKeyID(ctx context.Context, keyID string) (*Credential, error) {
+	row := q.db.QueryRowContext(ctx, `SELECT key_id, service_id, COALESCE(secret_hint,''), status, allowed_task_codes, expires_at, last_used_at, created_at
+		FROM job_service_credential WHERE key_id=?`, keyID)
+	var c Credential
+	var codes []byte
+	var exp, last sql.NullTime
+	if err := row.Scan(&c.KeyID, &c.ServiceID, &c.SecretHint, &c.Status, &codes, &exp, &last, &c.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if len(codes) > 0 {
+		_ = json.Unmarshal(codes, &c.AllowedTaskCodes)
+	}
+	if exp.Valid {
+		t := exp.Time.UTC()
+		c.ExpiresAt = &t
+	}
+	if last.Valid {
+		t := last.Time.UTC()
+		c.LastUsedAt = &t
+	}
+	c.CreatedAt = c.CreatedAt.UTC()
+	return &c, nil
+}

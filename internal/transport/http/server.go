@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/catalog"
+	appexec "github.com/GlassJob/job-center/internal/application/execution"
 	"github.com/GlassJob/job-center/internal/config"
 	"github.com/GlassJob/job-center/internal/infrastructure/security"
 	repo "github.com/GlassJob/job-center/internal/repository/mysql"
@@ -18,6 +19,7 @@ type Server struct {
 	db         *sql.DB
 	store      *repo.Store
 	catalog    *catalog.Service
+	exec       *appexec.Service
 	cfg        *config.Config
 	nonces     *security.NonceCache
 	defaultLoc *time.Location
@@ -36,6 +38,8 @@ func New(db *sql.DB, store *repo.Store, cat *catalog.Service, cfg *config.Config
 	}
 }
 
+func (s *Server) SetExecution(exec *appexec.Service) { s.exec = exec }
+
 func (s *Server) MountExecutor(mux *http.ServeMux) {
 	mux.HandleFunc("/health/live", s.live)
 	mux.HandleFunc("/health/ready", s.ready)
@@ -45,14 +49,27 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/health/live", s.live)
 	mux.HandleFunc("/health/ready", s.ready)
 
-	// P1 观测（无 HMAC，仅内网；P2 起正式路径走 /v1/admin + 签名）
-	mux.HandleFunc("GET /v1/services", s.listServices)
-	mux.HandleFunc("GET /v1/services/{id}", s.getService)
-	mux.HandleFunc("GET /v1/services/{id}/instances", s.listInstances)
-	mux.HandleFunc("GET /v1/tasks", s.listTasks)
+	// 读接口：HMAC + X-JC-Operator 权限强制
+	mux.Handle("GET /v1/admin/services", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListServices)))
+	mux.Handle("GET /v1/admin/services/{service_id}", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminGetService)))
+	mux.Handle("GET /v1/admin/instances", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListInstances)))
+	mux.Handle("GET /v1/admin/tasks", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminListTasks)))
+	mux.Handle("GET /v1/admin/tasks/{task_id}", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminGetTask)))
+
+	// 写接口
+	mux.Handle("POST /v1/admin/services", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminCreateService)))
+	mux.Handle("PATCH /v1/admin/services/{service_id}", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminPatchService)))
+	mux.Handle("GET /v1/admin/services/{service_id}/credentials", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminListCredentials)))
+	mux.Handle("POST /v1/admin/services/{service_id}/credentials", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminCreateCredential)))
+	mux.Handle("POST /v1/admin/credentials/{key_id}/revoke", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminRevokeCredential)))
 
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/enabled", s.AdminAuth("job.task.update")(http.HandlerFunc(s.putTaskEnabled)))
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/schedule", s.AdminAuth("job.schedule.update")(http.HandlerFunc(s.putTaskSchedule)))
+	mux.Handle("POST /v1/admin/tasks/{task_id}/executions", s.AdminAuth("job.task.execute")(http.HandlerFunc(s.postTaskExecution)))
+	mux.Handle("GET /v1/admin/executions", s.AdminAuth("job.execution.view")(http.HandlerFunc(s.listExecutions)))
+	mux.Handle("GET /v1/admin/executions/{execution_id}", s.AdminAuth("job.execution.view")(http.HandlerFunc(s.getExecution)))
+	mux.Handle("POST /v1/admin/executions/{execution_id}/cancel", s.AdminAuth("job.task.cancel")(http.HandlerFunc(s.postCancelExecution)))
+	mux.Handle("GET /v1/admin/executions/{execution_id}/logs", s.AdminAuth("job.execution.log.view")(http.HandlerFunc(s.listExecutionLogs)))
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
@@ -69,52 +86,9 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
-	page, limit := pageLimit(r)
-	items, total, err := s.store.Q().ListServices(r.Context(), r.URL.Query().Get("q"), page, limit)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "limit": limit})
-}
 
-func (s *Server) getService(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	svc, err := s.store.Q().GetService(r.Context(), id)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, svc)
-}
 
-func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	page, limit := pageLimit(r)
-	items, total, err := s.store.Q().ListInstances(r.Context(), repo.InstanceFilter{
-		ServiceID: id, Status: r.URL.Query().Get("status"), Page: page, Limit: limit,
-	})
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "limit": limit})
-}
 
-func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	page, limit := pageLimit(r)
-	var sid int64
-	if v := r.URL.Query().Get("service_id"); v != "" {
-		sid, _ = strconv.ParseInt(v, 10, 64)
-	}
-	items, total, err := s.store.Q().ListTasks(r.Context(), repo.TaskFilter{ServiceID: sid, Page: page, Limit: limit})
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "limit": limit})
-}
 
 func pageLimit(r *http.Request) (int, int) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))

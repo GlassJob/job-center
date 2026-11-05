@@ -51,6 +51,10 @@ func TestP1ExecutorLifecycle(t *testing.T) {
 	cfg.WebSocket.AuthTimeout = config.Duration(3 * time.Second)
 	cfg.WebSocket.PingInterval = config.Duration(30 * time.Second)
 	cfg.WebSocket.PingTimeout = config.Duration(60 * time.Second)
+	if cfg.Security.AdminClients == nil {
+		cfg.Security.AdminClients = map[string]config.AdminClient{}
+	}
+	cfg.Security.AdminClients["glassadmin"] = config.AdminClient{Secret: "dev-admin-secret-16b", MaxPerms: []string{"*"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -161,25 +165,27 @@ func TestP1ExecutorLifecycle(t *testing.T) {
 		if hb.InstanceStatus != "ONLINE" {
 			t.Fatalf("status=%s", hb.InstanceStatus)
 		}
-		// version queryable via admin API
-		r, err := http.Get("http://" + cfg.HTTP.AdminAddr + "/v1/services/" + itoa(svc.ID) + "/instances")
-		if err != nil {
-			t.Fatal(err)
+		// version queryable via signed admin API
+		code, raw := signedJSON(t, http.MethodGet, "http://"+cfg.HTTP.AdminAddr+"/v1/admin/instances?service_id="+itoa(svc.ID),
+			nil, "", "dev-admin-secret-16b", []string{"job.service.view"}, false)
+		if code != 200 {
+			t.Fatalf("instances %d %s", code, raw)
 		}
-		defer r.Body.Close()
 		var body struct {
-			Items []struct {
-				InstanceID string  `json:"instance_id"`
-				AppVersion *string `json:"app_version"`
-				GitCommit  *string `json:"git_commit"`
-				Status     string  `json:"status"`
-			} `json:"items"`
+			Data struct {
+				List []struct {
+					InstanceID string  `json:"instance_id"`
+					AppVersion *string `json:"app_version"`
+					GitCommit  *string `json:"git_commit"`
+					Status     string  `json:"status"`
+				} `json:"list"`
+			} `json:"data"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal([]byte(raw), &body); err != nil {
 			t.Fatal(err)
 		}
 		found := false
-		for _, it := range body.Items {
+		for _, it := range body.Data.List {
 			if it.InstanceID == "inst-reg-1" {
 				found = true
 				if it.AppVersion == nil || *it.AppVersion != "1.0.0" || it.GitCommit == nil || *it.GitCommit != "abc1234" || it.Status != "ONLINE" {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/catalog"
+	appexec "github.com/GlassJob/job-center/internal/application/execution"
 	"github.com/GlassJob/job-center/internal/application/monitoring"
 	"github.com/GlassJob/job-center/internal/application/registration"
 	"github.com/GlassJob/job-center/internal/config"
@@ -79,6 +80,13 @@ func run() error {
 
 	ws := wstransport.NewServer(reg, cfg, val, log)
 	api := httpapi.New(db, store, cat, cfg, loc, tzName)
+	leaseTTL := cfg.WebSocket.LeaseTTL.D()
+	if leaseTTL <= 0 {
+		leaseTTL = 60 * time.Second
+	}
+	execSvc := appexec.New(store, ws.Hub(), leaseTTL, log)
+	ws.SetExecution(execSvc)
+	api.SetExecution(execSvc)
 
 	execMux := http.NewServeMux()
 	api.MountExecutor(execMux)

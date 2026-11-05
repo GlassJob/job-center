@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	appexec "github.com/GlassJob/job-center/internal/application/execution"
 	"github.com/GlassJob/job-center/internal/application/registration"
 	"github.com/GlassJob/job-center/internal/config"
 	"github.com/GlassJob/job-center/internal/protocol"
@@ -12,16 +13,21 @@ import (
 )
 
 type Server struct {
-	hub *Hub
-	reg *registration.Service
-	cfg *config.Config
-	val *protocol.Validator
-	log *slog.Logger
+	hub  *Hub
+	reg  *registration.Service
+	exec *appexec.Service
+	cfg  *config.Config
+	val  *protocol.Validator
+	log  *slog.Logger
 }
 
 func NewServer(reg *registration.Service, cfg *config.Config, val *protocol.Validator, log *slog.Logger) *Server {
 	return &Server{hub: NewHub(), reg: reg, cfg: cfg, val: val, log: log}
 }
+
+func (s *Server) Hub() *Hub { return s.hub }
+
+func (s *Server) SetExecution(exec *appexec.Service) { s.exec = exec }
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(s.serveWS)
@@ -41,7 +47,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.SetReadLimit(s.cfg.WebSocket.MaxMessageBytes)
-	c := newConn(ws, remoteIP(r.RemoteAddr), s.hub, s.reg, s.cfg, s.val, s.log)
+	c := newConn(ws, remoteIP(r.RemoteAddr), s.hub, s.reg, s.exec, s.cfg, s.val, s.log)
 	c.Run(r.Context())
 }
 

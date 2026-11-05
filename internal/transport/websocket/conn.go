@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/apperr"
+	appexec "github.com/GlassJob/job-center/internal/application/execution"
 	"github.com/GlassJob/job-center/internal/application/registration"
 	"github.com/GlassJob/job-center/internal/config"
 	"github.com/GlassJob/job-center/internal/infrastructure/idgen"
@@ -24,6 +25,7 @@ type Conn struct {
 	peerIP string
 	hub    *Hub
 	reg    *registration.Service
+	exec   *appexec.Service
 	cfg    *config.Config
 	val    *protocol.Validator
 	log    *slog.Logger
@@ -37,10 +39,10 @@ type Conn struct {
 	sendCh chan []byte
 }
 
-func newConn(ws *websocket.Conn, peerIP string, hub *Hub, reg *registration.Service, cfg *config.Config, val *protocol.Validator, log *slog.Logger) *Conn {
+func newConn(ws *websocket.Conn, peerIP string, hub *Hub, reg *registration.Service, exec *appexec.Service, cfg *config.Config, val *protocol.Validator, log *slog.Logger) *Conn {
 	id := idgen.NewULID()
 	return &Conn{
-		id: id, ws: ws, peerIP: peerIP, hub: hub, reg: reg, cfg: cfg, val: val,
+		id: id, ws: ws, peerIP: peerIP, hub: hub, reg: reg, exec: exec, cfg: cfg, val: val,
 		log: log.With("connection_id", id),
 		sendCh: make(chan []byte, cfg.WebSocket.SendQueueSize),
 	}
@@ -141,9 +143,108 @@ func (c *Conn) handle(ctx context.Context, raw []byte) error {
 		return c.onHeartbeat(ctx, env)
 	case protocol.TypeServiceUnregister:
 		return c.onUnregister(ctx, env)
+	case protocol.TypeTaskExecuteAck:
+		return c.onTaskResult(ctx, env, "execute_ack")
+	case protocol.TypeTaskStarted:
+		return c.onTaskResult(ctx, env, "started")
+	case protocol.TypeTaskProgress:
+		return c.onTaskResult(ctx, env, "progress")
+	case protocol.TypeTaskLog:
+		return c.onTaskResult(ctx, env, "log")
+	case protocol.TypeTaskCompleted:
+		return c.onTaskResult(ctx, env, "completed")
+	case protocol.TypeTaskFailed:
+		return c.onTaskResult(ctx, env, "failed")
+	case protocol.TypeTaskCancelled:
+		return c.onTaskResult(ctx, env, "cancelled")
+	case protocol.TypeTaskCancelAck:
+		return c.onCancelAck(ctx, env)
 	default:
-		return c.sendError(protocol.ErrNotImplemented, "task messages are handled in P2", false, env.MessageID)
+		return c.sendError(protocol.ErrNotImplemented, "unsupported message type", false, env.MessageID)
 	}
+}
+
+func (c *Conn) onTaskResult(ctx context.Context, env protocol.Envelope, kind string) error {
+	if c.exec == nil {
+		return c.sendError(protocol.ErrNotImplemented, "execution service not wired", false, env.MessageID)
+	}
+	sess := c.session()
+	if sess == nil || !sess.Registered {
+		return c.sendError(protocol.ErrInstanceNotRegistered, "register first", false, env.MessageID)
+	}
+	var ack *protocol.TaskResultAck
+	var err error
+	switch kind {
+	case "execute_ack":
+		var m protocol.TaskExecuteAck
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid execute_ack", false, env.MessageID)
+		}
+		ack, err = c.exec.OnExecuteAck(ctx, sess.InstanceID, m)
+	case "started":
+		var m protocol.TaskStarted
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid started", false, env.MessageID)
+		}
+		ack, err = c.exec.OnStarted(ctx, sess.InstanceID, m)
+	case "progress":
+		var m protocol.TaskProgress
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid progress", false, env.MessageID)
+		}
+		ack, err = c.exec.OnProgress(ctx, sess.InstanceID, m)
+	case "log":
+		var m protocol.TaskLog
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid log", false, env.MessageID)
+		}
+		ack, err = c.exec.OnLog(ctx, sess.InstanceID, m)
+	case "completed":
+		var m protocol.TaskCompleted
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid completed", false, env.MessageID)
+		}
+		ack, err = c.exec.OnCompleted(ctx, sess.InstanceID, m)
+	case "failed":
+		var m protocol.TaskFailed
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid failed", false, env.MessageID)
+		}
+		ack, err = c.exec.OnFailed(ctx, sess.InstanceID, m)
+	case "cancelled":
+		var m protocol.TaskCancelled
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid cancelled", false, env.MessageID)
+		}
+		ack, err = c.exec.OnCancelled(ctx, sess.InstanceID, m)
+	}
+	if err != nil {
+		ae := apperr.As(err)
+		return c.sendError(ae.Code, ae.Message, ae.Retryable, env.MessageID)
+	}
+	if ack != nil {
+		return c.reply(protocol.TypeTaskResultAck, env.MessageID, ack)
+	}
+	return nil
+}
+
+func (c *Conn) onCancelAck(ctx context.Context, env protocol.Envelope) error {
+	if c.exec == nil {
+		return c.sendError(protocol.ErrNotImplemented, "execution service not wired", false, env.MessageID)
+	}
+	sess := c.session()
+	if sess == nil {
+		return c.sendError(protocol.ErrAuthRequired, "authenticate first", false, env.MessageID)
+	}
+	var m protocol.TaskCancelAck
+	if err := json.Unmarshal(env.Data, &m); err != nil {
+		return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid cancel_ack", false, env.MessageID)
+	}
+	if err := c.exec.OnCancelAck(ctx, sess.InstanceID, m); err != nil {
+		ae := apperr.As(err)
+		return c.sendError(ae.Code, ae.Message, ae.Retryable, env.MessageID)
+	}
+	return nil
 }
 
 func (c *Conn) onAuth(ctx context.Context, env protocol.Envelope) error {
