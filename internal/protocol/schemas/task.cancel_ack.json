@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.cancel_ack.json",
+  "title": "task.cancel_ack",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.cancel_ack"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "attempt_id",
+        "state"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "state": {
+          "enum": [
+            "CANCELLING",
+            "NOT_FOUND",
+            "ALREADY_FINISHED"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

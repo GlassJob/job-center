@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/service.heartbeat.json",
+  "title": "service.heartbeat",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "service.heartbeat"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "instance_id",
+        "status",
+        "running"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "status": {
+          "enum": [
+            "ONLINE",
+            "DRAINING"
+          ]
+        },
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "attempt_id",
+              "lease_token"
+            ],
+            "properties": {
+              "attempt_id": {
+                "type": "string",
+                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "lease_token": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$",
+                "description": "lease_token（fencing token）"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "metrics": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

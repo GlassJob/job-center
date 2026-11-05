@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.result_ack.json",
+  "title": "task.result_ack",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.result_ack"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "status",
+        "attempt_id"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "status": {
+          "enum": [
+            "OK",
+            "REJECTED",
+            "RETRY_LATER"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "acked_through_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "task.log 专用：该 attempt 已持久化的最大连续 seq"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

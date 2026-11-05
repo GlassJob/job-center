@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/service.unregister.json",
+  "title": "service.unregister",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "service.unregister"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "instance_id",
+        "reason"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "reason": {
+          "enum": [
+            "SHUTDOWN",
+            "DRAINING",
+            "RELOAD"
+          ]
+        },
+        "drain_timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

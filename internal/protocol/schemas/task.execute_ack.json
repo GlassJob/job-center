@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.execute_ack.json",
+  "title": "task.execute_ack",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.execute_ack"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "attempt_id",
+        "lease_token",
+        "accepted"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "duplicate": {
+          "type": "boolean",
+          "description": "该 attempt_id 已收到过（重复投递）"
+        },
+        "reject_code": {
+          "enum": [
+            "UNKNOWN_TASK",
+            "CAPACITY_FULL",
+            "DRAINING",
+            "VERSION_MISMATCH",
+            "INVALID_PARAMS"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

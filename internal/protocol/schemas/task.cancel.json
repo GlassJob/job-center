@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.cancel.json",
+  "title": "task.cancel",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.cancel"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "attempt_id",
+        "lease_token",
+        "reason"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "reason": {
+          "enum": [
+            "ADMIN",
+            "TIMEOUT",
+            "LEASE_REVOKED",
+            "SHUTDOWN"
+          ]
+        },
+        "grace_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "requested_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

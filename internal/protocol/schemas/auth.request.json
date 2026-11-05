@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/auth.request.json",
+  "title": "auth.request",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "auth.request"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "service_code",
+        "credential",
+        "instance_id",
+        "protocol_versions",
+        "sdk"
+      ],
+      "properties": {
+        "service_code": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 256,
+          "description": "jcs_<key_id>.<secret>；不得写入日志"
+        },
+        "instance_id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "protocol_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "sdk": {
+          "type": "object",
+          "required": [
+            "language",
+            "version"
+          ],
+          "properties": {
+            "language": {
+              "type": "string",
+              "maxLength": 16
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          "additionalProperties": false
+        },
+        "resume": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "previous_session_epoch": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

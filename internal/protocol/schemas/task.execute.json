@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.execute.json",
+  "title": "task.execute",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.execute"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "execution_id",
+        "attempt_id",
+        "attempt_number",
+        "lease_token",
+        "lease_expires_at",
+        "task_code",
+        "params",
+        "timeout_seconds",
+        "deadline_at"
+      ],
+      "properties": {
+        "execution_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "attempt_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "lease_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "task_code": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+        },
+        "handler_version": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[0-9]+(\\.[0-9]+){0,2}([-+][0-9A-Za-z.-]+)?$",
+          "description": "MAJOR[.MINOR[.PATCH]]；主版本相同即兼容"
+        },
+        "schema_hash": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deadline_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trigger_type": {
+          "enum": [
+            "CRON",
+            "MANUAL",
+            "API",
+            "CATCH_UP"
+          ]
+        },
+        "scheduled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

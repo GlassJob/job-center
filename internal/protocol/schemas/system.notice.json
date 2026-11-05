@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/system.notice.json",
+  "title": "system.notice",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "system.notice"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "SESSION_REPLACED",
+            "SERVER_SHUTDOWN",
+            "CONFIG_CHANGED",
+            "LOG_THROTTLED",
+            "LEASE_REVOKED",
+            "DRAIN_REQUESTED"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

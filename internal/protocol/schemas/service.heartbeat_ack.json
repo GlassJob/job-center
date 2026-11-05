@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/service.heartbeat_ack.json",
+  "title": "service.heartbeat_ack",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "service.heartbeat_ack"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "server_time"
+      ],
+      "properties": {
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "instance_status": {
+          "enum": [
+            "ONLINE",
+            "SUSPECT",
+            "DRAINING"
+          ]
+        },
+        "leases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "attempt_id",
+              "valid"
+            ],
+            "properties": {
+              "attempt_id": {
+                "type": "string",
+                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "valid": {
+                "type": "boolean"
+              },
+              "lease_expires_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reason": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.failed.json",
+  "title": "task.failed",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.failed"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "attempt_id",
+        "lease_token",
+        "finished_at",
+        "error",
+        "reason"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "enum": [
+            "HANDLER_ERROR",
+            "PANIC",
+            "TIMEOUT",
+            "PROCESS_CRASH",
+            "INVALID_PARAMS",
+            "UNKNOWN_TASK",
+            "MEMORY_LIMIT"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          }
+        },
+        "exit_code": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

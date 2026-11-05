@@ -1,0 +1,45 @@
+# Job Center 配置示例。复制为 configs/local.yaml（已 gitignore）后修改。
+# 所有敏感项也可用环境变量提供：JC_DB_DSN、JC_CREDENTIAL_PEPPER、JC_ADMIN_CLIENT_SECRETS（glassadmin:<secret>,deployer:<secret>）
+node_id: ""                    # 空 = hostname-pid
+http:
+  executor_addr: ":8080"       # Executor WebSocket（/v1/executor/ws）+ /health/*
+  admin_addr: "127.0.0.1:8081" # 管理 API，仅内网
+  max_body_bytes: 1048576
+  shutdown_timeout: 15s
+database:
+  # 连接会被强制设置 parseTime=true、loc=UTC、time_zone='+00:00'
+  dsn: "glassjob_center:<password>@tcp(127.0.0.1:3306)/glassjob_center"
+  max_open_conns: 50
+  max_idle_conns: 10
+  conn_max_lifetime: 30m
+security:
+  credential_pepper: ""        # ≥16 字节随机串；修改会使全部现有凭据失效
+  timestamp_skew: 300s
+  nonce_ttl: 10m
+  admin_clients:
+    glassadmin:
+      secret: ""
+      max_perms: ["*"]
+websocket:
+  auth_timeout: 5s
+  max_message_bytes: 1048576
+  ping_interval: 20s
+  ping_timeout: 40s
+  write_timeout: 10s
+  send_queue_size: 256
+  max_connections: 10000
+  max_conns_per_service: 200
+  rate_per_second: 200
+  rate_burst: 400
+  lease_ttl: 60s
+  log_batch_max_entries: 100
+instance:
+  heartbeat_interval: 10s
+  suspect_after: 30s           # ONLINE 超过该时长无心跳 → SUSPECT
+  offline_after: 90s           # SUSPECT/断线后超过该时长未恢复 → OFFLINE
+  sweep_interval: 5s
+scheduler:
+  default_timezone: ""         # 空 = 服务器本地时区（TZ 或 /etc/localtime）；Docker 必须设置 TZ
+log:
+  level: info                  # debug|info|warn|error
+  format: json                 # json|text

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/auth.response.json",
+  "title": "auth.response",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "auth.response"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "session_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "protocol_version": {
+          "type": "string"
+        },
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "heartbeat_interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lease_ttl_seconds": {
+          "type": "integer",
+          "minimum": 5
+        },
+        "max_message_bytes": {
+          "type": "integer"
+        },
+        "log_batch_max_entries": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

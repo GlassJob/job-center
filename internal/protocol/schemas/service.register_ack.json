@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/service.register_ack.json",
+  "title": "service.register_ack",
+  "description": "方向：C→E",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "service.register_ack"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "instance_status": {
+          "enum": [
+            "ONLINE",
+            "DRAINING"
+          ]
+        },
+        "accepted_tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "task_code"
+            ],
+            "properties": {
+              "task_code": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+              },
+              "task_id": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "rejected_tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "task_code",
+              "code"
+            ],
+            "properties": {
+              "task_code": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+              },
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "task_code": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+              },
+              "code": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "attempt_id",
+              "decision"
+            ],
+            "properties": {
+              "attempt_id": {
+                "type": "string",
+                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "decision": {
+                "enum": [
+                  "CONTINUE",
+                  "ABORT",
+                  "SEND_RESULT"
+                ]
+              },
+              "lease_expires_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reason": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 16384
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/envelope.json",
+  "title": "WebSocket 消息信封",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "message_id",
+    "type",
+    "timestamp",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$"
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^(auth|service|task|system)\\.[a-z_]+$"
+    },
+    "request_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64,
+      "description": "响应类消息 = 被响应消息的 message_id"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
+    },
+    "data": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/service.register.json",
+  "title": "service.register",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "service.register"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "service_code",
+        "service_name",
+        "instance_id",
+        "runtime",
+        "deployment",
+        "capacity",
+        "tasks"
+      ],
+      "properties": {
+        "service_code": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+        },
+        "service_name": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "instance_id": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "environment": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "host": {
+          "type": "object",
+          "required": [
+            "hostname"
+          ],
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "ip": {
+              "type": "string",
+              "maxLength": 45
+            },
+            "pid": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "runtime": {
+          "type": "object",
+          "required": [
+            "language",
+            "version"
+          ],
+          "properties": {
+            "language": {
+              "type": "string",
+              "maxLength": 16
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "additionalProperties": false
+        },
+        "deployment": {
+          "type": "object",
+          "required": [
+            "version",
+            "git_commit"
+          ],
+          "properties": {
+            "version": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "git_commit": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "build_time": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false
+        },
+        "capacity": {
+          "type": "object",
+          "required": [
+            "max_concurrency"
+          ],
+          "properties": {
+            "max_concurrency": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            }
+          },
+          "additionalProperties": false
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "task_code",
+              "task_name",
+              "handler_version"
+            ],
+            "properties": {
+              "task_code": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$"
+              },
+              "task_name": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "handler_version": {
+                "type": "string",
+                "maxLength": 32,
+                "pattern": "^[0-9]+(\\.[0-9]+){0,2}([-+][0-9A-Za-z.-]+)?$",
+                "description": "MAJOR[.MINOR[.PATCH]]；主版本相同即兼容"
+              },
+              "default_cron": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128,
+                "description": "严格 6 字段"
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 604800
+              },
+              "max_concurrency": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "input_schema": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 500
+        },
+        "running_attempts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "attempt_id",
+              "execution_id",
+              "lease_token",
+              "local_state"
+            ],
+            "properties": {
+              "attempt_id": {
+                "type": "string",
+                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "execution_id": {
+                "type": "string",
+                "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "lease_token": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$",
+                "description": "lease_token（fencing token）"
+              },
+              "local_state": {
+                "enum": [
+                  "ACCEPTED",
+                  "RUNNING",
+                  "FINISHED_UNREPORTED",
+                  "CANCELLING"
+                ]
+              },
+              "started_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
