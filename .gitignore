@@ -1,0 +1,30 @@
+# 本地/敏感配置（不得提交）
+configs/local.yaml
+configs/*.local.yaml
+*.env
+.env
+.env.*
+!deploy/.env.example
+*.pem
+*.key
+credentials*
+secrets*
+# 构建与测试产物
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+# 归档/数据
+/archive/
+/data/
+mysql-data/
+*.sock
+*.pid
+# 平台级参考与临时验证（不属于本仓库）
+_ref/
+_verify/
+# 编辑器
+.idea/
+.vscode/
+.DS_Store

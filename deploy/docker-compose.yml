@@ -1,0 +1,78 @@
+# GlassJob 开发环境 Docker Compose（已确认方案：nginx 单入口；无域名/TLS 时用 http/ws）
+# 注意：盒子上没有 Docker，本文件尚未运行验证，计划在 P8 验证。
+# 用法：cp .env.example .env && 修改密码 && docker compose up -d
+name: glassjob
+
+x-tz: &tz
+  TZ: ${TZ:-Asia/Shanghai}   # 默认调度时区 = Job Center 服务器本地时区，容器必须设置 TZ
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      <<: *tz
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+      GJ_CENTER_PASSWORD: ${GJ_CENTER_PASSWORD:?set in .env}
+      GJ_ADMIN_PASSWORD: ${GJ_ADMIN_PASSWORD:?set in .env}
+      GJ_ADMIN_BIZ_PASSWORD: ${GJ_ADMIN_BIZ_PASSWORD:?set in .env}
+    command: ["--default-time-zone=+00:00", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      retries: 30
+
+  job-center:
+    build: ..
+    image: glassjob/job-center:dev
+    depends_on:
+      mysql: {condition: service_healthy}
+    environment:
+      <<: *tz
+      JC_DB_DSN: "glassjob_center:${GJ_CENTER_PASSWORD}@tcp(mysql:3306)/glassjob_center?parseTime=true&loc=UTC"
+      JC_CREDENTIAL_PEPPER: ${JC_CREDENTIAL_PEPPER:?set in .env}
+      JC_ADMIN_CLIENT_SECRETS: "glassadmin:${JC_GLASSADMIN_SECRET},deployer:${JC_DEPLOYER_SECRET}"
+      JC_HTTP_EXECUTOR_ADDR: ":8080"
+      JC_HTTP_ADMIN_ADDR: ":8081"
+      JC_ARCHIVE_DIR: /var/lib/glassjob/archive
+    command: ["serve"]
+    volumes:
+      - archive:/var/lib/glassjob/archive
+    expose: ["8080", "8081"]
+
+  glassadmin:
+    build: ../../job-admin   # 需与 job-center 同级检出 job-admin 仓库
+    image: glassjob/job-admin:dev
+    depends_on:
+      mysql: {condition: service_healthy}
+    environment:
+      <<: *tz
+      DB_HOST: mysql
+      DB_NAME: glassjob_admin
+      DB_USER: glassjob_admin
+      DB_PASS: ${GJ_ADMIN_PASSWORD}
+      BIZ_DB_NAME: glassjob_admin_biz
+      BIZ_DB_USER: glassjob_admin_biz
+      BIZ_DB_PASS: ${GJ_ADMIN_BIZ_PASSWORD}
+      JOB_CENTER_BASE_URL: http://job-center:8081
+      JOB_CENTER_CLIENT_ID: glassadmin
+      JOB_CENTER_CLIENT_SECRET: ${JC_GLASSADMIN_SECRET}
+    expose: ["9000"]
+    volumes:
+      - admin-dist:/app/web/dist
+
+  nginx:
+    image: nginx:1.27-alpine
+    environment: *tz
+    depends_on: [job-center, glassadmin]
+    ports: ["${HTTP_PORT:-80}:80"]
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - admin-dist:/usr/share/nginx/html:ro
+
+volumes:
+  mysql-data:
+  archive:
+  admin-dist:
