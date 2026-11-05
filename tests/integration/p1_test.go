@@ -82,7 +82,7 @@ func TestP1ExecutorLifecycle(t *testing.T) {
 	go mon.Run(ctx)
 
 	ws := wstransport.NewServer(reg, cfg, val, log)
-	api := httpapi.New(db, store, cat)
+	api := httpapi.New(db, store, cat, cfg, loc, tz)
 	mux := http.NewServeMux()
 	api.MountExecutor(mux)
 	ws.Mount(mux)

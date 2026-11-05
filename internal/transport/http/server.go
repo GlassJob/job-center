@@ -9,17 +9,31 @@ import (
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/catalog"
+	"github.com/GlassJob/job-center/internal/config"
+	"github.com/GlassJob/job-center/internal/infrastructure/security"
 	repo "github.com/GlassJob/job-center/internal/repository/mysql"
 )
 
 type Server struct {
-	db      *sql.DB
-	store   *repo.Store
-	catalog *catalog.Service
+	db         *sql.DB
+	store      *repo.Store
+	catalog    *catalog.Service
+	cfg        *config.Config
+	nonces     *security.NonceCache
+	defaultLoc *time.Location
+	defaultTZ  string
 }
 
-func New(db *sql.DB, store *repo.Store, cat *catalog.Service) *Server {
-	return &Server{db: db, store: store, catalog: cat}
+func New(db *sql.DB, store *repo.Store, cat *catalog.Service, cfg *config.Config, defaultLoc *time.Location, defaultTZ string) *Server {
+	ttl := 10 * time.Minute
+	if cfg != nil && cfg.Security.NonceTTL.D() > 0 {
+		ttl = cfg.Security.NonceTTL.D()
+	}
+	return &Server{
+		db: db, store: store, catalog: cat, cfg: cfg,
+		nonces: security.NewNonceCache(ttl),
+		defaultLoc: defaultLoc, defaultTZ: defaultTZ,
+	}
 }
 
 func (s *Server) MountExecutor(mux *http.ServeMux) {
@@ -30,10 +44,15 @@ func (s *Server) MountExecutor(mux *http.ServeMux) {
 func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/health/live", s.live)
 	mux.HandleFunc("/health/ready", s.ready)
+
+	// P1 观测（无 HMAC，仅内网；P2 起正式路径走 /v1/admin + 签名）
 	mux.HandleFunc("GET /v1/services", s.listServices)
 	mux.HandleFunc("GET /v1/services/{id}", s.getService)
 	mux.HandleFunc("GET /v1/services/{id}/instances", s.listInstances)
 	mux.HandleFunc("GET /v1/tasks", s.listTasks)
+
+	mux.Handle("PUT /v1/admin/tasks/{task_id}/enabled", s.AdminAuth("job.task.update")(http.HandlerFunc(s.putTaskEnabled)))
+	mux.Handle("PUT /v1/admin/tasks/{task_id}/schedule", s.AdminAuth("job.schedule.update")(http.HandlerFunc(s.putTaskSchedule)))
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {

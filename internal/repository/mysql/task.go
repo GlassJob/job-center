@@ -200,15 +200,26 @@ func (q *Queries) GetSchedule(ctx context.Context, taskID int64) (*Schedule, err
 	return s, err
 }
 
-// UpdateScheduleCAS 乐观锁更新；成功后 config_source=ADMIN、version+1。返回受影响行数（0=版本冲突或不存在）。
+// UpdateScheduleCAS 乐观锁更新调度参数（不含 enabled）；成功后 config_source=ADMIN、version+1。
+// 返回受影响行数（0=版本冲突或不存在）。
 func (q *Queries) UpdateScheduleCAS(ctx context.Context, expectedVersion int64, s *Schedule, updatedBy string) (int64, error) {
-	res, err := q.db.ExecContext(ctx, `UPDATE job_schedule SET schedule_type=?, cron_expression=?, timezone=?, enabled=?, manual_enabled=?, timeout_seconds=?,
+	res, err := q.db.ExecContext(ctx, `UPDATE job_schedule SET schedule_type=?, cron_expression=?, timezone=?, manual_enabled=?, timeout_seconds=?,
 		concurrency_policy=?, concurrency_scope=?, max_concurrency=?, queue_max=?, retry_policy=?, misfire_policy=?, misfire_threshold_seconds=?,
 		catch_up_max=?, dispatch_strategy=?, next_fire_at=?, config_source='ADMIN', version=version+1, updated_by=?
 		WHERE task_id=? AND version=?`,
-		s.ScheduleType, s.CronExpression, s.Timezone, s.Enabled, s.ManualEnabled, s.TimeoutSeconds, s.ConcurrencyPolicy, s.ConcurrencyScope,
+		s.ScheduleType, s.CronExpression, s.Timezone, s.ManualEnabled, s.TimeoutSeconds, s.ConcurrencyPolicy, s.ConcurrencyScope,
 		s.MaxConcurrency, s.QueueMax, string(s.RetryPolicy), s.MisfirePolicy, s.MisfireThresholdSeconds, s.CatchUpMax, s.DispatchStrategy,
 		s.NextFireAt, updatedBy, s.TaskID, expectedVersion)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// SetEnabledCAS 仅改 enabled（及 next_fire_at）；成功后 config_source=ADMIN、version+1。
+func (q *Queries) SetEnabledCAS(ctx context.Context, taskID, expectedVersion int64, enabled bool, nextFire *time.Time, updatedBy string) (int64, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE job_schedule SET enabled=?, next_fire_at=?, config_source='ADMIN', version=version+1, updated_by=?
+		WHERE task_id=? AND version=?`, enabled, nextFire, updatedBy, taskID, expectedVersion)
 	if err != nil {
 		return 0, err
 	}

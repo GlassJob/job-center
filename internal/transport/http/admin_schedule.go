@@ -1,0 +1,259 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/GlassJob/job-center/internal/domain/schedule"
+	"github.com/GlassJob/job-center/internal/domain/task"
+	repo "github.com/GlassJob/job-center/internal/repository/mysql"
+)
+
+type enabledBody struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (s *Server) putTaskEnabled(w http.ResponseWriter, r *http.Request) {
+	op, _ := OperatorFrom(r.Context())
+	taskID, err := strconv.ParseInt(r.PathValue("task_id"), 10, 64)
+	if err != nil || taskID < 1 {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "bad task_id", nil)
+		return
+	}
+	match := r.Header.Get("If-Match")
+	ver, err := strconv.ParseInt(match, 10, 64)
+	if err != nil || match == "" {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "If-Match version required", nil)
+		return
+	}
+	var body enabledBody
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
+		return
+	}
+	cur, err := s.store.Q().GetSchedule(r.Context(), taskID)
+	if err != nil {
+		if err == repo.ErrNotFound {
+			writeAPIError(w, r, http.StatusNotFound, "NOT_FOUND", "schedule not found", nil)
+			return
+		}
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	var next *time.Time
+	if body.Enabled {
+		nf, err := s.nextFireFor(cur)
+		if err != nil {
+			writeAPIError(w, r, http.StatusUnprocessableEntity, "CRON_INVALID", err.Error(), nil)
+			return
+		}
+		next = nf
+	}
+	by := op.ID
+	n, err := s.store.Q().SetEnabledCAS(r.Context(), taskID, ver, body.Enabled, next, by)
+	if err != nil {
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	if n == 0 {
+		writeAPIError(w, r, http.StatusConflict, "VERSION_CONFLICT", "If-Match does not match", nil)
+		return
+	}
+	out, err := s.store.Q().GetSchedule(r.Context(), taskID)
+	if err != nil {
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	s.fillEffectiveTZ(out)
+	_ = s.store.Q().InsertAudit(r.Context(), repo.Audit{
+		OperatorSource: "ADMIN", OperatorID: op.ID, OperatorName: op.Name, Action: "task.enabled",
+		Permission: "job.task.update", ResourceType: "task", ResourceID: strconv.FormatInt(taskID, 10),
+		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "OK",
+		Before: map[string]any{"version": ver}, After: map[string]any{"enabled": body.Enabled, "version": out.Version},
+	})
+	writeOK(w, r, http.StatusOK, out)
+}
+
+func (s *Server) putTaskSchedule(w http.ResponseWriter, r *http.Request) {
+	op, _ := OperatorFrom(r.Context())
+	taskID, err := strconv.ParseInt(r.PathValue("task_id"), 10, 64)
+	if err != nil || taskID < 1 {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "bad task_id", nil)
+		return
+	}
+	ver, err := strconv.ParseInt(r.Header.Get("If-Match"), 10, 64)
+	if err != nil || r.Header.Get("If-Match") == "" {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "If-Match version required", nil)
+		return
+	}
+	var patch map[string]any
+	if err := decodeJSONBody(r, &patch); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
+		return
+	}
+	// reject enabled in schedule body
+	if _, ok := patch["enabled"]; ok {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "enabled must use PUT .../enabled", nil)
+		return
+	}
+	cur, err := s.store.Q().GetSchedule(r.Context(), taskID)
+	if err != nil {
+		if err == repo.ErrNotFound {
+			writeAPIError(w, r, http.StatusNotFound, "NOT_FOUND", "schedule not found", nil)
+			return
+		}
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	applySchedulePatch(cur, patch)
+	if err := schedule.ValidateTimezone(cur.Timezone); err != nil {
+		writeAPIError(w, r, http.StatusUnprocessableEntity, "TIMEZONE_INVALID", err.Error(), nil)
+		return
+	}
+	if cur.ScheduleType == "CRON" {
+		if cur.CronExpression == nil || *cur.CronExpression == "" {
+			writeAPIError(w, r, http.StatusUnprocessableEntity, "CRON_INVALID", "cron_expression required for CRON", nil)
+			return
+		}
+		if _, err := task.ValidateCron(*cur.CronExpression); err != nil {
+			writeAPIError(w, r, http.StatusUnprocessableEntity, "CRON_INVALID", err.Error(), nil)
+			return
+		}
+	}
+	// 若当前 enabled，按新 cron 重算 next_fire_at
+	if cur.Enabled {
+		nf, err := s.nextFireFor(cur)
+		if err != nil {
+			writeAPIError(w, r, http.StatusUnprocessableEntity, "CRON_INVALID", err.Error(), nil)
+			return
+		}
+		cur.NextFireAt = nf
+	}
+	n, err := s.store.Q().UpdateScheduleCAS(r.Context(), ver, cur, op.ID)
+	if err != nil {
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	if n == 0 {
+		writeAPIError(w, r, http.StatusConflict, "VERSION_CONFLICT", "If-Match does not match", nil)
+		return
+	}
+	out, err := s.store.Q().GetSchedule(r.Context(), taskID)
+	if err != nil {
+		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
+		return
+	}
+	s.fillEffectiveTZ(out)
+	_ = s.store.Q().InsertAudit(r.Context(), repo.Audit{
+		OperatorSource: "ADMIN", OperatorID: op.ID, OperatorName: op.Name, Action: "task.schedule",
+		Permission: "job.schedule.update", ResourceType: "task", ResourceID: strconv.FormatInt(taskID, 10),
+		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "OK",
+		Before: map[string]any{"version": ver}, After: map[string]any{"version": out.Version, "patch": patch},
+	})
+	writeOK(w, r, http.StatusOK, out)
+}
+
+func applySchedulePatch(s *repo.Schedule, patch map[string]any) {
+	if v, ok := patch["schedule_type"].(string); ok {
+		s.ScheduleType = v
+	}
+	if raw, ok := patch["cron_expression"]; ok {
+		if raw == nil {
+			s.CronExpression = nil
+		} else if str, ok := raw.(string); ok {
+			s.CronExpression = &str
+		}
+	}
+	if raw, ok := patch["timezone"]; ok {
+		if raw == nil {
+			s.Timezone = nil
+		} else if str, ok := raw.(string); ok {
+			s.Timezone = &str
+		}
+	}
+	if v, ok := patch["manual_enabled"].(bool); ok {
+		s.ManualEnabled = v
+	}
+	if v, ok := asInt(patch["timeout_seconds"]); ok {
+		s.TimeoutSeconds = v
+	}
+	if v, ok := patch["concurrency_policy"].(string); ok {
+		s.ConcurrencyPolicy = v
+	}
+	if v, ok := patch["concurrency_scope"].(string); ok {
+		s.ConcurrencyScope = v
+	}
+	if v, ok := asInt(patch["max_concurrency"]); ok {
+		s.MaxConcurrency = v
+	}
+	if v, ok := asInt(patch["queue_max"]); ok {
+		s.QueueMax = v
+	}
+	if v, ok := patch["misfire_policy"].(string); ok {
+		s.MisfirePolicy = v
+	}
+	if v, ok := asInt(patch["misfire_threshold_seconds"]); ok {
+		s.MisfireThresholdSeconds = v
+	}
+	if v, ok := asInt(patch["catch_up_max"]); ok {
+		s.CatchUpMax = v
+	}
+	if v, ok := patch["dispatch_strategy"].(string); ok {
+		s.DispatchStrategy = v
+	}
+	if raw, ok := patch["retry_policy"]; ok && raw != nil {
+		// re-marshal
+		b, _ := json.Marshal(raw)
+		s.RetryPolicy = b
+	}
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+func (s *Server) nextFireFor(sch *repo.Schedule) (*time.Time, error) {
+	if sch.ScheduleType != "CRON" || sch.CronExpression == nil || *sch.CronExpression == "" {
+		return nil, nil
+	}
+	cs, err := task.ValidateCron(*sch.CronExpression)
+	if err != nil {
+		return nil, err
+	}
+	loc := s.defaultLoc
+	if sch.Timezone != nil && *sch.Timezone != "" {
+		l, err := time.LoadLocation(*sch.Timezone)
+		if err != nil {
+			return nil, err
+		}
+		loc = l
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	n := cs.Next(time.Now().In(loc)).UTC()
+	return &n, nil
+}
+
+func (s *Server) fillEffectiveTZ(sch *repo.Schedule) {
+	if sch.Timezone != nil && *sch.Timezone != "" {
+		sch.EffectiveTimezone = *sch.Timezone
+		return
+	}
+	if s.defaultTZ != "" {
+		sch.EffectiveTimezone = s.defaultTZ
+		return
+	}
+	sch.EffectiveTimezone = "Local"
+}

@@ -78,7 +78,7 @@ func run() error {
 	go mon.Run(ctx)
 
 	ws := wstransport.NewServer(reg, cfg, val, log)
-	api := httpapi.New(db, store, cat)
+	api := httpapi.New(db, store, cat, cfg, loc, tzName)
 
 	execMux := http.NewServeMux()
 	api.MountExecutor(execMux)
