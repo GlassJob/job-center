@@ -1,4 +1,4 @@
-# Job Center 运行镜像（多阶段）。盒子无 Docker，本文件尚未实测，见 docs/p8-report.md。
+# Job Center 运行镜像（多阶段）。默认通过 JC_* 环境变量注入配置，也可挂载 YAML 传 -config。
 FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -11,8 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /out/job-center /app/job-center
-COPY configs/local.yaml /app/configs/local.yaml
+COPY configs/config.example.yaml /app/configs/config.example.yaml
 ENV TZ=Asia/Shanghai
 EXPOSE 8080 8081
 ENTRYPOINT ["/app/job-center"]
-CMD ["-config", "/app/configs/local.yaml"]

@@ -36,10 +36,16 @@ func main() {
 }
 
 func run() error {
-	cfgPath := flag.String("config", "", "path to YAML config")
+	cfgPath := flag.String("config", "", "path to YAML config (auto-loads configs/local.yaml if present)")
 	flag.Parse()
 
-	cfg, err := config.Load(*cfgPath)
+	resolvedCfg := *cfgPath
+	if resolvedCfg == "" && os.Getenv("JC_DB_DSN") == "" {
+		if _, err := os.Stat("configs/local.yaml"); err == nil {
+			resolvedCfg = "configs/local.yaml"
+		}
+	}
+	cfg, err := config.Load(resolvedCfg)
 	if err != nil {
 		return err
 	}

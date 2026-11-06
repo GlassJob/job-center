@@ -36,7 +36,6 @@ services:
       JC_HTTP_EXECUTOR_ADDR: ":8080"
       JC_HTTP_ADMIN_ADDR: ":8081"
       JC_ARCHIVE_DIR: /var/lib/glassjob/archive
-    command: ["-config", "/app/configs/local.yaml"]
     volumes:
       - archive:/var/lib/glassjob/archive
     expose: ["8080", "8081"]
