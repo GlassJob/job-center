@@ -68,6 +68,8 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/versions", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListVersions)))
 	mux.Handle("GET /v1/admin/deployments", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListDeployments)))
 	mux.Handle("GET /v1/admin/alerts", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListAlerts)))
+	mux.Handle("GET /v1/admin/audits", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminListAudits)))
+	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.Handle("POST /v1/admin/cron/preview", s.AdminAuth("job.task.view")(http.HandlerFunc(s.postCronPreview)))
 
 	// 写接口

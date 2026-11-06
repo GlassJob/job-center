@@ -215,6 +215,98 @@ func (q *Queries) InsertAudit(ctx context.Context, a Audit) error {
 	return err
 }
 
+
+type AuditRow struct {
+	ID             int64           `json:"id"`
+	OperatorSource string          `json:"operator_source"`
+	OperatorID     string          `json:"operator_id"`
+	OperatorName   *string         `json:"operator_name"`
+	Action         string          `json:"action"`
+	Permission     *string         `json:"permission"`
+	ResourceType   string          `json:"resource_type"`
+	ResourceID     *string         `json:"resource_id"`
+	RequestID      *string         `json:"request_id"`
+	ClientIP       *string         `json:"client_ip"`
+	Before         json.RawMessage `json:"before_data,omitempty"`
+	After          json.RawMessage `json:"after_data,omitempty"`
+	Result         string          `json:"result"`
+	ErrorMessage   *string         `json:"error_message"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
+type AuditFilter struct {
+	OperatorID   string
+	ResourceType string
+	From, To     *time.Time
+	CursorID     int64
+	Limit        int
+}
+
+func (q *Queries) ListAudits(ctx context.Context, f AuditFilter) ([]*AuditRow, int64, error) {
+	if f.Limit < 1 || f.Limit > 200 {
+		f.Limit = 50
+	}
+	where := []string{"1=1"}
+	args := []any{}
+	if f.OperatorID != "" {
+		where = append(where, "operator_id=?")
+		args = append(args, f.OperatorID)
+	}
+	if f.ResourceType != "" {
+		where = append(where, "resource_type=?")
+		args = append(args, f.ResourceType)
+	}
+	if f.From != nil {
+		where = append(where, "created_at>=?")
+		args = append(args, *f.From)
+	}
+	if f.To != nil {
+		where = append(where, "created_at<=?")
+		args = append(args, *f.To)
+	}
+	if f.CursorID > 0 {
+		where = append(where, "id<?")
+		args = append(args, f.CursorID)
+	}
+	sqlStr := `SELECT id, operator_source, operator_id, operator_name, action, permission, resource_type, resource_id,
+		request_id, client_ip, before_data, after_data, result, error_message, created_at
+		FROM job_operation_audit WHERE ` + strings.Join(where, " AND ") + ` ORDER BY id DESC LIMIT ?`
+	args = append(args, f.Limit+1)
+	rows, err := q.db.QueryContext(ctx, sqlStr, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []*AuditRow{}
+	for rows.Next() {
+		var a AuditRow
+		var on, perm, rid, req, ip, em sql.NullString
+		var before, after sql.NullString
+		if err := rows.Scan(&a.ID, &a.OperatorSource, &a.OperatorID, &on, &a.Action, &perm, &a.ResourceType, &rid,
+			&req, &ip, &before, &after, &a.Result, &em, &a.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		a.OperatorName, a.Permission, a.ResourceID = ptrStr(on), ptrStr(perm), ptrStr(rid)
+		a.RequestID, a.ClientIP, a.ErrorMessage = ptrStr(req), ptrStr(ip), ptrStr(em)
+		if before.Valid {
+			a.Before = json.RawMessage(before.String)
+		}
+		if after.Valid {
+			a.After = json.RawMessage(after.String)
+		}
+		out = append(out, &a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var next int64
+	if len(out) > f.Limit {
+		next = out[f.Limit-1].ID
+		out = out[:f.Limit]
+	}
+	return out, next, nil
+}
+
 func (q *Queries) UpdateService(ctx context.Context, id int64, name, desc, status *string) error {
 	cur, err := q.GetService(ctx, id)
 	if err != nil {

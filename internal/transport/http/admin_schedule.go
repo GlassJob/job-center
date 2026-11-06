@@ -70,7 +70,7 @@ func (s *Server) putTaskEnabled(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.Q().InsertAudit(r.Context(), repo.Audit{
 		OperatorSource: "ADMIN", OperatorID: op.ID, OperatorName: op.Name, Action: "task.enabled",
 		Permission: "job.task.update", ResourceType: "task", ResourceID: strconv.FormatInt(taskID, 10),
-		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "OK",
+		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "SUCCESS",
 		Before: map[string]any{"version": ver}, After: map[string]any{"enabled": body.Enabled, "version": out.Version},
 	})
 	writeOK(w, r, http.StatusOK, out)
@@ -149,7 +149,7 @@ func (s *Server) putTaskSchedule(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.Q().InsertAudit(r.Context(), repo.Audit{
 		OperatorSource: "ADMIN", OperatorID: op.ID, OperatorName: op.Name, Action: "task.schedule",
 		Permission: "job.schedule.update", ResourceType: "task", ResourceID: strconv.FormatInt(taskID, 10),
-		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "OK",
+		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "SUCCESS",
 		Before: map[string]any{"version": ver}, After: map[string]any{"version": out.Version, "patch": patch},
 	})
 	writeOK(w, r, http.StatusOK, out)

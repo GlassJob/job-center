@@ -1,5 +1,5 @@
 # GlassJob 开发环境 Docker Compose（已确认方案：nginx 单入口；无域名/TLS 时用 http/ws）
-# 注意：盒子上没有 Docker，本文件尚未运行验证，计划在 P8 验证。
+# 注意：盒子上没有 Docker，本文件尚未运行验证，P8：本机无 Docker，**未实测**（文件已就位）。
 # 用法：cp .env.example .env && 修改密码 && docker compose up -d
 name: glassjob
 
@@ -36,7 +36,7 @@ services:
       JC_HTTP_EXECUTOR_ADDR: ":8080"
       JC_HTTP_ADMIN_ADDR: ":8081"
       JC_ARCHIVE_DIR: /var/lib/glassjob/archive
-    command: ["serve"]
+    command: ["-config", "/app/configs/local.yaml"]
     volumes:
       - archive:/var/lib/glassjob/archive
     expose: ["8080", "8081"]

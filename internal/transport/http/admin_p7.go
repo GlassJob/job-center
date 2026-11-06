@@ -447,7 +447,7 @@ func (s *Server) postAdminDeployment(w http.ResponseWriter, r *http.Request) {
 		OperatorSource: "glassadmin", OperatorID: op.ID, OperatorName: op.Name,
 		Action: "deployment.register_manual", Permission: "job.deployment.manage",
 		ResourceType: "deployment", ResourceID: strconv.FormatInt(out.ID, 10),
-		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "OK", After: out,
+		RequestID: op.RequestID, ClientIP: op.ClientIP, Result: "SUCCESS", After: out,
 	})
 	writeOK(w, r, http.StatusOK, out)
 }
