@@ -1,6 +1,6 @@
-# GlassJob 开发环境 Docker Compose（已确认方案：nginx 单入口；无域名/TLS 时用 http/ws）
-# 注意：盒子上没有 Docker，本文件尚未运行验证，P8：本机无 Docker，**未实测**（文件已就位）。
-# 用法：cp .env.example .env && 修改密码 && docker compose up -d
+# GlassJob 开发环境 Docker Compose（nginx 单入口；无域名/TLS 时用 http/ws）
+# 注意：当前开发盒子无 Docker 守护进程，Compose 文件按各仓最新独立构建规范对齐。
+# 用法：cd deploy && cp .env.example .env && 修改密码与密钥 && docker compose up -d --build
 name: glassjob
 
 x-tz: &tz
@@ -32,7 +32,7 @@ services:
       <<: *tz
       JC_DB_DSN: "job_center:${GJ_CENTER_PASSWORD}@tcp(mysql:3306)/job_center?parseTime=true&loc=UTC"
       JC_CREDENTIAL_PEPPER: ${JC_CREDENTIAL_PEPPER:?set in .env}
-      JC_ADMIN_CLIENT_SECRETS: "glassadmin:${JC_GLASSADMIN_SECRET},deployer:${JC_DEPLOYER_SECRET}"
+      JC_ADMIN_CLIENT_SECRETS: "glassadmin:${JC_ADMIN_CLIENT_SECRET:?set in .env},deployer:${JC_DEPLOYER_SECRET:?set in .env}"
       JC_HTTP_EXECUTOR_ADDR: ":8080"
       JC_HTTP_ADMIN_ADDR: ":8081"
       JC_ARCHIVE_DIR: /var/lib/glassjob/archive
@@ -41,19 +41,25 @@ services:
     expose: ["8080", "8081"]
 
   glassadmin:
-    build: ../../job-admin   # 需与 job-center 同级检出 job-admin 仓库
+    build: ../../job-admin   # 需与 job-center 同级检出独立完整的 GlassJob/job-admin 仓库
     image: glassjob/job-admin:dev
     depends_on:
       mysql: {condition: service_healthy}
     environment:
       <<: *tz
+      DB_TYPE: mysql
       DB_HOST: mysql
+      DB_PORT: "3306"
       DB_NAME: job_admin
       DB_USER: job_admin
       DB_PASS: ${GJ_ADMIN_PASSWORD}
-      JOB_CENTER_BASE_URL: http://job-center:8081
-      JOB_CENTER_CLIENT_ID: glassadmin
-      JOB_CENTER_CLIENT_SECRET: ${JC_GLASSADMIN_SECRET}
+      DB_CHARSET: utf8mb4
+      DB_PREFIX: ga_
+      JC_ADMIN_BASE_URL: http://job-center:8081
+      JC_ADMIN_CLIENT_ID: glassadmin
+      JC_ADMIN_CLIENT_SECRET: ${JC_ADMIN_CLIENT_SECRET:?set in .env}
+      JC_ADMIN_SSE_PUBLIC_BASE: /jc/sse
+      JC_ADMIN_TIMEOUT: "10"
     expose: ["9000"]
     volumes:
       - admin-dist:/app/web/dist
