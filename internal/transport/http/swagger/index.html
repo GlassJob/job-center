@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Center HTTP API — Swagger UI</title>
+  <link rel="icon" type="image/png" href="./favicon-32x32.png" sizes="32x32" />
+  <link rel="stylesheet" href="./swagger-ui.css" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .jc-hmac-bar {
+      background: #1b2430; color: #e5e7eb; padding: 10px 18px;
+      border-bottom: 1px solid #334155; font-size: 13px;
+    }
+    .jc-hmac-row {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 1420px; margin: 0 auto;
+    }
+    .jc-hmac-title { font-weight: 600; color: #38bdf8; margin-right: 4px; white-space: nowrap; }
+    .jc-hmac-field { display: inline-flex; align-items: center; gap: 5px; }
+    .jc-hmac-field label { color: #94a3b8; font-size: 12px; white-space: nowrap; }
+    .jc-hmac-field input[type="text"],
+    .jc-hmac-field input[type="password"] {
+      background: #0f172a; color: #f8fafc; border: 1px solid #475569; border-radius: 4px;
+      padding: 4px 8px; font-size: 12px; outline: none;
+    }
+    .jc-hmac-field input:focus { border-color: #38bdf8; }
+    .jc-btn {
+      background: #334155; color: #f1f5f9; border: 1px solid #475569; border-radius: 4px;
+      padding: 4px 10px; font-size: 12px; cursor: pointer;
+    }
+    .jc-btn:hover { background: #475569; }
+    .jc-badge {
+      padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+    .jc-badge-on { background: #065f46; color: #a7f3d0; }
+    .jc-badge-off { background: #3f3f46; color: #d4d4d8; }
+    .jc-hint { color: #94a3b8; font-size: 11px; margin-left: auto; }
+  </style>
+</head>
+<body>
+  <div class="jc-hmac-bar">
+    <div class="jc-hmac-row">
+      <span class="jc-hmac-title">HMAC 联调签名</span>
+      <label class="jc-hmac-field" style="cursor:pointer;">
+        <input type="checkbox" id="jc-enabled" checked />
+        <span>自动签名</span>
+      </label>
+      <span class="jc-hmac-field">
+        <label for="jc-client">Client</label>
+        <input type="text" id="jc-client" placeholder="glassadmin" style="width:105px;" autocomplete="off" />
+      </span>
+      <span class="jc-hmac-field">
+        <label for="jc-secret">Secret</label>
+        <input type="password" id="jc-secret" placeholder="输入密钥（仅留内存/sessionStorage）" style="width:210px;" autocomplete="off" />
+      </span>
+      <span class="jc-hmac-field">
+        <label for="jc-op-id">Op ID</label>
+        <input type="text" id="jc-op-id" value="1" style="width:52px;" autocomplete="off" />
+      </span>
+      <span class="jc-hmac-field">
+        <label for="jc-op-name">Op Name</label>
+        <input type="text" id="jc-op-name" value="admin" style="width:76px;" autocomplete="off" />
+      </span>
+      <span class="jc-hmac-field">
+        <label for="jc-op-perms">Perms</label>
+        <input type="text" id="jc-op-perms" value="*" placeholder="*, 或逗号分隔" style="width:120px;" autocomplete="off" />
+      </span>
+      <label class="jc-hmac-field" style="cursor:pointer;" title="仅保存在当前浏览器标签页的 sessionStorage，关闭标签页即销毁">
+        <input type="checkbox" id="jc-persist" checked />
+        <span style="color:#94a3b8;font-size:12px;">暂存 sessionStorage</span>
+      </label>
+      <button type="button" class="jc-btn" id="jc-clear">清空</button>
+      <span id="jc-status" class="jc-badge jc-badge-off">未填密钥</span>
+      <span class="jc-hint">Try it out 时自动计算 X-JC-Signature 与 X-JC-Operator</span>
+    </div>
+  </div>
+  <div id="swagger-ui"></div>
+
+  <script src="./swagger-ui-bundle.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    // 纯本地 JS SHA-256 + HMAC-SHA256（兼容非 HTTPS 内网地址，无需外部库或 crypto.subtle）
+    var K = [
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ];
+    function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+    function utf8Bytes(str) { return new TextEncoder().encode(str || ""); }
+    function toHex(bytes) {
+      var out = "";
+      for (var i = 0; i < bytes.length; i++) out += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+      return out;
+    }
+    function sha256Bytes(msg) {
+      var l = msg.length;
+      var bitHi = Math.floor((l * 8) / 0x100000000);
+      var bitLo = (l * 8) >>> 0;
+      var padLen = ((l + 9 + 63) & ~63);
+      var buf = new Uint8Array(padLen);
+      buf.set(msg);
+      buf[l] = 0x80;
+      var dv = new DataView(buf.buffer);
+      dv.setUint32(padLen - 8, bitHi, false);
+      dv.setUint32(padLen - 4, bitLo, false);
+      var h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a,h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+      var w = new Uint32Array(64);
+      for (var off = 0; off < padLen; off += 64) {
+        for (var i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4, false);
+        for (var i = 16; i < 64; i++) {
+          var s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15] >>> 3);
+          var s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2] >>> 10);
+          w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+        }
+        var a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+        for (var i = 0; i < 64; i++) {
+          var S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25);
+          var ch = (e & f) ^ ((~e) & g);
+          var t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+          var S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22);
+          var maj = (a & b) ^ (a & c) ^ (b & c);
+          var t2 = (S0 + maj) >>> 0;
+          h=g; g=f; f=e; e=(d + t1) >>> 0; d=c; c=b; b=a; a=(t1 + t2) >>> 0;
+        }
+        h0=(h0+a)>>>0; h1=(h1+b)>>>0; h2=(h2+c)>>>0; h3=(h3+d)>>>0;
+        h4=(h4+e)>>>0; h5=(h5+f)>>>0; h6=(h6+g)>>>0; h7=(h7+h)>>>0;
+      }
+      var out = new Uint8Array(32);
+      var odv = new DataView(out.buffer);
+      [h0,h1,h2,h3,h4,h5,h6,h7].forEach(function (v, idx) { odv.setUint32(idx * 4, v, false); });
+      return out;
+    }
+    function hmacSha256Hex(keyBytes, msgBytes) {
+      var k = keyBytes.length > 64 ? sha256Bytes(keyBytes) : keyBytes;
+      var ipad = new Uint8Array(64), opad = new Uint8Array(64);
+      for (var i = 0; i < 64; i++) {
+        var b = i < k.length ? k[i] : 0;
+        ipad[i] = b ^ 0x36;
+        opad[i] = b ^ 0x5c;
+      }
+      var inner = new Uint8Array(64 + msgBytes.length);
+      inner.set(ipad); inner.set(msgBytes, 64);
+      var innerHash = sha256Bytes(inner);
+      var outer = new Uint8Array(64 + 32);
+      outer.set(opad); outer.set(innerHash, 64);
+      return toHex(sha256Bytes(outer));
+    }
+    function base64UrlEncode(bytes) {
+      var bin = "";
+      for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    function randomHex(nBytes) {
+      var b = new Uint8Array(nBytes);
+      if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(b);
+      else for (var i = 0; i < nBytes; i++) b[i] = Math.floor(Math.random() * 256);
+      return toHex(b);
+    }
+    function rfc3986(s) {
+      return encodeURIComponent(s).replace(/[!'()*]/g, function (c) {
+        return "%" + c.charCodeAt(0).toString(16).toUpperCase();
+      });
+    }
+    function canonicalQuery(rawQuery) {
+      if (!rawQuery) return "";
+      var map = Object.create(null);
+      rawQuery.split("&").forEach(function (seg) {
+        if (!seg) return;
+        var eq = seg.indexOf("=");
+        var rk = eq >= 0 ? seg.slice(0, eq) : seg;
+        var rv = eq >= 0 ? seg.slice(eq + 1) : "";
+        var k = decodeURIComponent(rk.replace(/\+/g, "%20"));
+        var v = decodeURIComponent(rv.replace(/\+/g, "%20"));
+        if (!map[k]) map[k] = [];
+        map[k].push(v);
+      });
+      var keys = Object.keys(map).sort();
+      var parts = [];
+      keys.forEach(function (k) {
+        map[k].sort().forEach(function (v) {
+          parts.push(rfc3986(k) + "=" + rfc3986(v));
+        });
+      });
+      return parts.join("&");
+    }
+
+    var STORAGE_KEY = "jc_swagger_hmac_v1";
+    var els = {
+      enabled: document.getElementById("jc-enabled"),
+      client: document.getElementById("jc-client"),
+      secret: document.getElementById("jc-secret"),
+      opId: document.getElementById("jc-op-id"),
+      opName: document.getElementById("jc-op-name"),
+      opPerms: document.getElementById("jc-op-perms"),
+      persist: document.getElementById("jc-persist"),
+      clear: document.getElementById("jc-clear"),
+      status: document.getElementById("jc-status")
+    };
+
+    function loadSession() {
+      try {
+        var raw = sessionStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        var s = JSON.parse(raw);
+        if (typeof s.enabled === "boolean") els.enabled.checked = s.enabled;
+        if (s.client) els.client.value = s.client;
+        if (s.secret) els.secret.value = s.secret;
+        if (s.opId) els.opId.value = s.opId;
+        if (s.opName) els.opName.value = s.opName;
+        if (s.opPerms) els.opPerms.value = s.opPerms;
+      } catch (_) {}
+    }
+    function syncState() {
+      var active = els.enabled.checked && els.client.value.trim() !== "" && els.secret.value !== "";
+      els.status.textContent = active ? "签名已就绪" : (els.enabled.checked ? "未填密钥" : "已关闭");
+      els.status.className = "jc-badge " + (active ? "jc-badge-on" : "jc-badge-off");
+      try {
+        if (els.persist.checked) {
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+            enabled: els.enabled.checked,
+            client: els.client.value.trim(),
+            secret: els.secret.value,
+            opId: els.opId.value.trim(),
+            opName: els.opName.value.trim(),
+            opPerms: els.opPerms.value.trim()
+          }));
+        } else {
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (_) {}
+    }
+    ["change", "input"].forEach(function (ev) {
+      [els.enabled, els.client, els.secret, els.opId, els.opName, els.opPerms, els.persist].forEach(function (el) {
+        el.addEventListener(ev, syncState);
+      });
+    });
+    els.clear.addEventListener("click", function () {
+      els.client.value = "";
+      els.secret.value = "";
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) {}
+      syncState();
+    });
+    loadSession();
+    syncState();
+
+    var params = new URLSearchParams(window.location.search);
+    var specUrl = params.get("spec") || "../openapi.yaml";
+
+    window.ui = SwaggerUIBundle({
+      url: specUrl,
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      validatorUrl: null,
+      persistAuthorization: false,
+      requestInterceptor: function (req) {
+        if (req.loadSpec) return req;
+        if (!els.enabled.checked) return req;
+        var client = els.client.value.trim();
+        var secret = els.secret.value;
+        if (!client || !secret) return req;
+
+        var u = new URL(req.url, window.location.href);
+        var path = u.pathname;
+        var isAdmin = path.indexOf("/v1/admin/") !== -1;
+        var isClientOnly = path.endsWith("/v1/deployments") || path.indexOf("/v1/trigger/") !== -1;
+        if (!isAdmin && !isClientOnly) return req;
+        if (u.searchParams.get("ticket")) return req;
+
+        req.headers = req.headers || {};
+        var ts = String(Math.floor(Date.now() / 1000));
+        var nonce = randomHex(16);
+        var opHdr = req.headers["X-JC-Operator"] || "";
+        if (isAdmin && !opHdr) {
+          var perms = (els.opPerms.value || "*").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+          var opObj = {
+            id: els.opId.value.trim() || "1",
+            name: els.opName.value.trim() || "admin",
+            perms: perms.length ? perms : ["*"],
+            client_ip: "127.0.0.1",
+            request_id: "swag-" + nonce.slice(0, 12)
+          };
+          opHdr = base64UrlEncode(utf8Bytes(JSON.stringify(opObj)));
+          req.headers["X-JC-Operator"] = opHdr;
+        }
+        var bodyBytes = new Uint8Array(0);
+        if (typeof req.body === "string") bodyBytes = utf8Bytes(req.body);
+        else if (req.body instanceof Uint8Array) bodyBytes = req.body;
+
+        var canonical = [
+          (req.method || "GET").toUpperCase(),
+          path,
+          canonicalQuery(u.search.replace(/^\?/, "")),
+          toHex(sha256Bytes(bodyBytes)),
+          ts,
+          nonce,
+          toHex(sha256Bytes(utf8Bytes(opHdr)))
+        ].join("\n");
+
+        req.headers["X-JC-Client"] = client;
+        req.headers["X-JC-Timestamp"] = ts;
+        req.headers["X-JC-Nonce"] = nonce;
+        req.headers["X-JC-Signature"] = hmacSha256Hex(utf8Bytes(secret), utf8Bytes(canonical));
+        return req;
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

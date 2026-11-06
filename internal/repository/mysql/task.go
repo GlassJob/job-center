@@ -414,3 +414,12 @@ func (q *Queries) GetAttemptSnapshot(ctx context.Context, attemptID string) (*At
 	a.LostAt, a.LeaseExpiresAt = ptrTime(lost), ptrTime(exp)
 	return &a, nil
 }
+
+func (q *Queries) GetTaskIDByCode(ctx context.Context, serviceID int64, taskCode string) (int64, error) {
+	var id int64
+	err := q.db.QueryRowContext(ctx, "SELECT id FROM job_definition WHERE service_id=? AND task_code=?", serviceID, taskCode).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
+}

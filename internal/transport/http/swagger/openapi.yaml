@@ -1,0 +1,1202 @@
+openapi: 3.1.0
+info:
+  title: Job Center HTTP API
+  version: 1.0.0
+  description: |
+    Job Center 管理 API（GlassAdmin 后端调用）、SSE、健康检查与 Prometheus 指标、发布版本登记、外部 API 触发及内置 Swagger 文档。
+    所有时间为 RFC 3339 UTC；所有 `/v1/admin/*`、`/v1/deployments`、`/v1/trigger/*` JSON 响应统一包裹在 `Envelope {code, message, request_id, data}` 中。
+    鉴权：`/v1/admin/*` 使用 HMAC 服务签名 + `X-JC-Operator` 权限校验；`/v1/deployments` 与 `/v1/trigger/*` 使用客户端 HMAC 签名；
+    SSE 另支持短期票据 `?ticket=`；`/health/*`、`/metrics`、`/openapi.yaml`、`/swagger/`、`/docs` 无需签名（文档路由受 `docs_enabled` 开关控制，默认开启）。
+servers:
+  - url: /
+    description: 当前管理监听源（Swagger UI 默认同源）
+  - url: http://127.0.0.1:18081
+    description: 本地管理监听
+  - url: http://job-center:8081
+    description: compose 内网管理监听
+tags:
+  - {name: health}
+  - {name: docs}
+  - {name: overview}
+  - {name: services}
+  - {name: instances}
+  - {name: tasks}
+  - {name: executions}
+  - {name: versions}
+  - {name: audit}
+  - {name: deployments}
+  - {name: trigger}
+security:
+  - hmacSignature: []
+paths:
+  /health/live:
+    get:
+      tags: [health]
+      security: []
+      summary: 进程存活
+      responses:
+        '200': {description: alive, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+  /health/ready:
+    get:
+      tags: [health]
+      security: []
+      summary: 就绪（检查 MySQL、调度租约等关键依赖）
+      responses:
+        '200': {description: ready, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+        '503': {description: not ready, content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}}
+  /metrics:
+    get:
+      tags: [health]
+      security: []
+      summary: Prometheus 指标（表行数、表字节数、归档滞后天数）
+      responses:
+        '200':
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema: {type: string}
+  /openapi.yaml:
+    get:
+      tags: [docs]
+      security: []
+      summary: OpenAPI 3.1 规范文件（受 docs_enabled 控制，默认开启）
+      responses:
+        '200':
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema: {type: string}
+        '404': {description: docs_enabled=false 时关闭}
+  /swagger/:
+    get:
+      tags: [docs]
+      security: []
+      summary: 离线静态内置 Swagger UI（内置 HMAC + Operator 自动签名联调栏；受 docs_enabled 控制，默认开启）
+      responses:
+        '200':
+          description: Swagger UI HTML
+          content:
+            text/html:
+              schema: {type: string}
+        '404': {description: docs_enabled=false 时关闭}
+  /docs:
+    get:
+      tags: [docs]
+      security: []
+      summary: 302 重定向至 /swagger/（受 docs_enabled 控制，默认开启）
+      responses:
+        '302':
+          description: Redirect to /swagger/
+          headers:
+            Location:
+              schema: {type: string, example: /swagger/}
+        '404': {description: docs_enabled=false 时关闭}
+  /v1/admin/overview:
+    get:
+      tags: [overview]
+      summary: 系统概览（页面 A）
+      x-permission: job.service.view
+      parameters:
+        - {$ref: '#/components/parameters/Operator'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - properties:
+                      data: {$ref: '#/components/schemas/Overview'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/alerts:
+    get:
+      tags: [overview]
+      summary: 监控告警快照（实例离线 / 服务无在线实例 / 调度逾期 / 执行派发逾期 / 执行超 deadline；P7 Watcher 周期评估，无查询参数）
+      x-permission: job.service.view
+      parameters:
+        - {$ref: '#/components/parameters/Operator'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [list, evaluated_at]
+                        properties:
+                          list: {type: array, items: {$ref: '#/components/schemas/Alert'}}
+                          evaluated_at: {type: [string, 'null'], format: date-time, description: 'Watcher 最近一次评估时间；尚未评估或未启用 Watcher 时为 null'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/services:
+    get:
+      tags: [services]
+      summary: 服务列表（页面 B）
+      x-permission: job.service.view
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: keyword, in: query, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/ServicePage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [services]
+      summary: 创建服务（Executor 认证前必须存在）
+      x-permission: job.credential.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_code, service_name]
+              properties:
+                service_code: {type: string, pattern: '^[a-z0-9][a-z0-9._-]{1,63}$'}
+                service_name: {type: string, maxLength: 128}
+                description: {type: string, maxLength: 1000}
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Service'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/services/{service_id}:
+    parameters: [{$ref: '#/components/parameters/ServiceId'}]
+    get:
+      tags: [services]
+      summary: 服务详情
+      x-permission: job.service.view
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Service'}
+        '404': {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [services]
+      summary: 修改服务名称/描述/启停
+      x-permission: job.credential.manage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_name: {type: string}
+                description: {type: string}
+                status: {type: string, enum: [ACTIVE, DISABLED]}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Service'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/services/{service_id}/credentials:
+    parameters: [{$ref: '#/components/parameters/ServiceId'}]
+    get:
+      tags: [services]
+      summary: 凭据列表（不含明文）
+      x-permission: job.credential.manage
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/Credential'}}
+    post:
+      tags: [services]
+      summary: 创建/轮换凭据；明文 token 仅在本响应返回一次
+      x-permission: job.credential.manage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_at: {type: string, format: date-time}
+                allowed_task_codes: {type: array, items: {type: string}}
+                rotate_from_key_id: {type: string, description: '旧凭据进入 ROTATING，宽限期后自动 REVOKED'}
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: '#/components/schemas/Credential'
+                          - type: object
+                            required: [token]
+                            properties:
+                              token: {type: string, description: 'jcs_<key_id>.<secret>'}
+  /v1/admin/credentials/{key_id}/revoke:
+    post:
+      tags: [services]
+      summary: 吊销凭据（已建立的连接会被断开）
+      x-permission: job.credential.manage
+      parameters:
+        - {name: key_id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: revoked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: 'null'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/instances:
+    get:
+      tags: [instances]
+      summary: 实例列表（页面 C）
+      x-permission: job.service.view
+      parameters:
+        - {name: service_id, in: query, schema: {type: integer}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/InstanceStatus'}}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/InstancePage'}
+  /v1/admin/tasks:
+    get:
+      tags: [tasks]
+      summary: 任务列表（页面 D）
+      x-permission: job.task.view
+      parameters:
+        - {name: service_id, in: query, schema: {type: integer}}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: enabled, in: query, schema: {type: boolean}}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TaskPage'}
+  /v1/admin/tasks/{task_id}:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    get:
+      tags: [tasks]
+      summary: 任务详情（定义 + 调度配置 + 提供该任务的实例 + 版本历史）
+      x-permission: job.task.view
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TaskDetail'}
+        '404': {$ref: '#/components/responses/Error'}
+  /v1/admin/tasks/{task_id}/enabled:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    put:
+      tags: [tasks]
+      summary: 启停任务（仅改 schedule.enabled）；需 If-Match 版本号
+      x-permission: job.task.update
+      parameters:
+        - {name: If-Match, in: header, required: true, schema: {type: string}, description: 'job_schedule.version'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Schedule'}
+        '409': {description: 版本冲突, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/tasks/{task_id}/schedule:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    put:
+      tags: [tasks]
+      summary: 修改调度配置（Cron/时区/并发/超时/重试/misfire；不含启停，启停见 /enabled）；需 If-Match 版本号
+      x-permission: job.schedule.update
+      parameters:
+        - {name: If-Match, in: header, required: true, schema: {type: string}, description: 'job_schedule.version'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScheduleUpdate'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Schedule'}
+        '409': {description: 版本冲突, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '422': {description: Cron/时区非法, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /v1/admin/cron/preview:
+    post:
+      tags: [tasks]
+      summary: 校验 6 字段 Cron 并返回未来 N 次触发时间
+      x-permission: job.task.view
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cron_expression]
+              properties:
+                cron_expression: {type: string}
+                timezone: {type: [string, 'null'], example: Asia/Shanghai, description: 'NULL/缺省 = Job Center 服务器本地时区'}
+                count: {type: integer, minimum: 1, maximum: 20, default: 5}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          valid: {type: boolean}
+                          error: {type: string}
+                          next_fire_times: {type: array, items: {type: string, format: date-time}}
+  /v1/admin/tasks/{task_id}/executions:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    post:
+      tags: [tasks]
+      summary: 手动执行（页面 E）；只返回 execution_id，不等待业务完成
+      x-permission: job.task.execute
+      parameters:
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [params]
+              properties:
+                params: {type: object}
+                reason: {type: string, maxLength: 500}
+                allow_wait: {type: boolean, default: false, description: '无可用实例时是否进入 PENDING 等待'}
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TriggerResult'}
+        '200':
+          description: 幂等重放（同 Idempotency-Key）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TriggerResult'}
+        '400': {description: 'PARAMS_INVALID / NO_AVAILABLE_INSTANCE / MANUAL_DISABLED', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '409': {description: 'CONCURRENCY_SKIPPED（SKIP 策略冲突，返回被跳过的 execution_id）', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /v1/admin/executions:
+    get:
+      tags: [executions]
+      summary: 执行记录（页面 F）
+      x-permission: job.execution.view
+      parameters:
+        - {name: task_id, in: query, schema: {type: integer}}
+        - {name: service_id, in: query, schema: {type: integer}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ExecutionStatus'}}
+        - {name: trigger_type, in: query, schema: {type: string, enum: [CRON, MANUAL, API, CATCH_UP]}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: cursor, in: query, schema: {type: string}, description: 'keyset 分页游标（大表不用 OFFSET）'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/ExecutionPage'}
+  /v1/admin/executions/{execution_id}:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [executions]
+      summary: 执行详情（页面 G，扁平结构含 Attempt 列表）
+      x-permission: job.execution.view
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/ExecutionDetail'}
+        '404': {$ref: '#/components/responses/Error'}
+  /v1/admin/executions/{execution_id}/cancel:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    post:
+      tags: [executions]
+      summary: 请求取消；返回当前取消阶段，不代表已停止
+      x-permission: job.task.cancel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 500}
+                grace_seconds: {type: integer, minimum: 0, maximum: 3600, default: 30}
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          execution_status: {$ref: '#/components/schemas/ExecutionStatus'}
+                          cancel_state: {type: string, enum: [REQUESTED, SENT, ACKED, STOPPED, CANCEL_UNCONFIRMED]}
+        '409': {description: 已终态, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /v1/admin/executions/{execution_id}/logs:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [executions]
+      summary: 日志增量/分页读取
+      x-permission: job.execution.log.view
+      parameters:
+        - {name: attempt_id, in: query, schema: {type: string}}
+        - {name: after_seq, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: level, in: query, schema: {type: string, enum: [DEBUG, INFO, WARN, ERROR]}, description: 最低级别}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [list, next_after_seq, has_more]
+                        properties:
+                          list: {type: array, items: {$ref: '#/components/schemas/LogEntry'}}
+                          next_after_seq: {type: integer, description: '本页最后一条的 seq；无数据时等于请求的 after_seq'}
+                          has_more: {type: boolean}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/executions/{execution_id}/events:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [executions]
+      summary: SSE 实时事件（状态、进度、日志）；支持 Last-Event-ID 续传
+      x-permission: job.execution.log.view
+      security:
+        - hmacSignature: []
+        - sseTicket: []
+      parameters:
+        - {name: Last-Event-ID, in: header, schema: {type: string}, description: '游标 <event_id>:<attempt_number>:<seq>'}
+        - {name: cursor, in: query, schema: {type: string}, description: 与 Last-Event-ID 等价（首连指定）}
+      responses:
+        '200':
+          description: 'text/event-stream；event 类型：state | progress | log | end；每 15s 发送 ": ping" 注释'
+          content:
+            text/event-stream:
+              schema: {type: string}
+  /v1/admin/sse-tickets:
+    post:
+      tags: [executions]
+      summary: GlassAdmin 为浏览器申请 SSE 短期票据（60s，单执行，单次使用）
+      x-permission: job.execution.log.view
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [execution_id]
+              properties:
+                execution_id: {type: string}
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ticket: {type: string}
+                          expires_at: {type: string, format: date-time}
+                          url: {type: string, description: '浏览器可访问的 SSE 地址（经 nginx）'}
+  /v1/admin/versions:
+    get:
+      tags: [versions]
+      summary: 版本对账（页面 H）
+      x-permission: job.service.view
+      parameters:
+        - {name: environment, in: query, schema: {type: string, default: dev}}
+        - {name: service_id, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/VersionReconciliation'}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/deployments:
+    get:
+      tags: [versions]
+      summary: 发布记录
+      x-permission: job.service.view
+      parameters:
+        - {name: service_id, in: query, schema: {type: integer}}
+        - {name: environment, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/Deployment'}}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/admin/audits:
+    get:
+      tags: [audit]
+      summary: 操作审计
+      x-permission: job.credential.manage
+      parameters:
+        - {name: operator_id, in: query, schema: {type: string}}
+        - {name: resource_type, in: query, schema: {type: string}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/AuditPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/deployments:
+    post:
+      tags: [deployments]
+      summary: '通用发布版本登记（替代 Jenkins 回调；P7 实现）。发布脚本以 HMAC 客户端签名调用（无 X-JC-Operator）。按 (service_code, environment, build_id) 幂等'
+      security:
+        - hmacSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeploymentRegister'}
+      responses:
+        '200':
+          description: 已接收（幂等重放也返回 200）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Deployment'}
+        '401': {$ref: '#/components/responses/Error'}
+  /v1/admin/services/{service_id}/deployments:
+    parameters: [{name: service_id, in: path, required: true, schema: {type: integer}}]
+    post:
+      tags: [deployments]
+      summary: 管理端手工登记预期版本（source=MANUAL，写审计；P7 实现）
+      x-permission: job.deployment.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deployment_version, git_commit]
+              properties:
+                environment: {type: string, default: dev}
+                deployment_version: {type: string}
+                git_commit: {type: string}
+                build_id: {type: string, description: '可空；空时生成 manual-<时间>'}
+                set_expected: {type: boolean, default: true}
+                remark: {type: string}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/Deployment'}
+        '404': {$ref: '#/components/responses/Error'}
+  /v1/trigger/{service_code}/{task_code}:
+    post:
+      tags: [trigger]
+      summary: 外部系统 HTTP API 触发（任务书 5.1）；API 客户端须在白名单中被授权该任务
+      security:
+        - hmacSignature: []
+      parameters:
+        - {name: service_code, in: path, required: true, schema: {type: string}}
+        - {name: task_code, in: path, required: true, schema: {type: string}}
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [params]
+              properties:
+                params: {type: object}
+                allow_wait: {type: boolean, default: false, description: '无可用实例时是否进入 PENDING 等待'}
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TriggerResult'}
+        '200':
+          description: 幂等重放（同 Idempotency-Key）
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TriggerResult'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    hmacSignature:
+      type: apiKey
+      in: header
+      name: X-JC-Signature
+      description: |
+        HMAC-SHA256 签名，需同时提供 X-JC-Client、X-JC-Timestamp、X-JC-Nonce（管理接口另需 X-JC-Operator）。
+        canonical = METHOD\nPATH\nCANONICAL_QUERY\nhex(sha256(body))\nTIMESTAMP\nNONCE\nhex(sha256(X-JC-Operator))
+    sseTicket:
+      type: apiKey
+      in: query
+      name: ticket
+  parameters:
+    Operator:
+      name: X-JC-Operator
+      in: header
+      required: false
+      description: 'base64url(JSON{id,name,perms[],client_ip,request_id})，管理接口必需并被签名覆盖（Swagger UI 联调栏可自动注入）'
+      schema: {type: string}
+    Page: {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 20}}
+    ServiceId: {name: service_id, in: path, required: true, schema: {type: integer}}
+    TaskId: {name: task_id, in: path, required: true, schema: {type: integer}}
+    ExecutionId: {name: execution_id, in: path, required: true, schema: {type: string, pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'}}
+  responses:
+    Error:
+      description: error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ServicePage:
+      description: ok
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Envelope'
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      list: {type: array, items: {$ref: '#/components/schemas/Service'}}
+                      total: {type: integer}
+                      page: {type: integer}
+                      limit: {type: integer}
+  schemas:
+    Envelope:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, example: OK}
+        message: {type: string}
+        request_id: {type: string}
+        data: {}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, example: PARAMS_INVALID}
+        message: {type: string}
+        request_id: {type: string}
+        details: {type: object}
+    Health:
+      type: object
+      properties:
+        status: {type: string, enum: [ok, ready, not_ready, degraded, fail]}
+        error: {type: string}
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: {type: string}
+              latency_ms: {type: number}
+              error: {type: string}
+        version: {type: string}
+        git_commit: {type: string}
+    Overview:
+      type: object
+      properties:
+        service_count: {type: integer}
+        online_instance_count: {type: integer}
+        task_count: {type: integer}
+        today_execution_count: {type: integer}
+        today_success_rate: {type: number}
+        today_failed_count: {type: integer}
+        running_count: {type: integer}
+        version_mismatch_instance_count: {type: integer}
+        today_timezone: {type: string, description: '"今日" 的时区口径'}
+    Service:
+      type: object
+      properties:
+        id: {type: integer}
+        service_code: {type: string}
+        service_name: {type: string}
+        description: {type: string}
+        status: {type: string, enum: [ACTIVE, DISABLED]}
+        languages: {type: array, items: {type: string}}
+        instance_count: {type: integer}
+        online_instance_count: {type: integer}
+        task_count: {type: integer}
+        running_versions: {type: array, items: {type: string}}
+        created_at: {type: string, format: date-time}
+    Credential:
+      type: object
+      properties:
+        key_id: {type: string}
+        status: {type: string, enum: [ACTIVE, ROTATING, REVOKED]}
+        secret_hint: {type: string}
+        allowed_task_codes: {type: [array, 'null'], items: {type: string}}
+        expires_at: {type: [string, 'null'], format: date-time}
+        last_used_at: {type: [string, 'null'], format: date-time}
+        created_at: {type: string, format: date-time}
+    InstanceStatus: {type: string, enum: [REGISTERING, ONLINE, SUSPECT, OFFLINE, DRAINING]}
+    Instance:
+      type: object
+      properties:
+        instance_id: {type: string}
+        service_id: {type: integer}
+        hostname: {type: string}
+        ip_address: {type: string}
+        language: {type: string}
+        runtime_version: {type: string}
+        sdk_version: {type: string}
+        app_version: {type: string}
+        git_commit: {type: string}
+        build_time: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        last_heartbeat_at: {type: string, format: date-time}
+        status: {$ref: '#/components/schemas/InstanceStatus'}
+        max_concurrency: {type: integer}
+        running_count: {type: integer}
+    InstancePage:
+      type: object
+      properties:
+        list: {type: array, items: {$ref: '#/components/schemas/Instance'}}
+        total: {type: integer}
+        page: {type: integer}
+        limit: {type: integer}
+    Schedule:
+      type: object
+      properties:
+        schedule_type: {type: string, enum: [CRON, NONE]}
+        cron_expression: {type: [string, 'null']}
+        timezone: {type: [string, 'null'], description: 'NULL = Job Center 服务器本地时区'}
+        effective_timezone: {type: string, readOnly: true, description: '实际生效的 IANA 时区'}
+        enabled: {type: boolean}
+        manual_enabled: {type: boolean}
+        timeout_seconds: {type: integer}
+        concurrency_policy: {type: string, enum: [ALLOW, SKIP, QUEUE]}
+        concurrency_scope: {type: string, enum: [TASK, SERVICE, IDEMPOTENCY_KEY]}
+        max_concurrency: {type: integer}
+        queue_max: {type: integer}
+        retry_policy: {$ref: '#/components/schemas/RetryPolicy'}
+        misfire_policy: {type: string, enum: [SKIP, FIRE_ONCE, CATCH_UP]}
+        misfire_threshold_seconds: {type: integer}
+        catch_up_max: {type: integer, maximum: 100}
+        dispatch_strategy: {type: string, enum: [LEAST_LOAD, ROUND_ROBIN, RANDOM]}
+        next_fire_at: {type: [string, 'null'], format: date-time}
+        last_fire_at: {type: [string, 'null'], format: date-time}
+        config_source: {type: string, enum: [DEFAULT, ADMIN]}
+        version: {type: integer}
+    ScheduleUpdate:
+      type: object
+      description: 调度可写字段（不含 enabled/启停——走 PUT .../enabled；不含 next_fire_at/last_fire_at/config_source/version）
+      properties:
+        schedule_type: {type: string, enum: [CRON, NONE]}
+        cron_expression: {type: [string, 'null']}
+        timezone: {type: [string, 'null'], description: 'NULL = 使用服务器本地时区'}
+        manual_enabled: {type: boolean}
+        timeout_seconds: {type: integer, minimum: 1, maximum: 604800}
+        concurrency_policy: {type: string, enum: [ALLOW, SKIP, QUEUE]}
+        concurrency_scope: {type: string, enum: [TASK, SERVICE, IDEMPOTENCY_KEY]}
+        max_concurrency: {type: integer, minimum: 1}
+        queue_max: {type: integer, minimum: 1}
+        retry_policy: {$ref: '#/components/schemas/RetryPolicy'}
+        misfire_policy: {type: string, enum: [SKIP, FIRE_ONCE, CATCH_UP]}
+        misfire_threshold_seconds: {type: integer, minimum: 0}
+        catch_up_max: {type: integer, minimum: 1, maximum: 100}
+        dispatch_strategy: {type: string, enum: [LEAST_LOAD, ROUND_ROBIN, RANDOM]}
+    RetryPolicy:
+      type: object
+      properties:
+        max_attempts: {type: integer, minimum: 1, maximum: 20}
+        strategy: {type: string, enum: [FIXED, EXPONENTIAL]}
+        initial_delay_seconds: {type: integer, minimum: 0}
+        max_delay_seconds: {type: integer, minimum: 0}
+        multiplier: {type: number, minimum: 1}
+        jitter: {type: number, minimum: 0, maximum: 1}
+        retryable_error_codes: {type: array, items: {type: string}}
+        retry_on_timeout: {type: boolean}
+        retry_on_lost: {type: boolean}
+    Task:
+      type: object
+      properties:
+        id: {type: integer}
+        service_id: {type: integer}
+        service_code: {type: string}
+        task_code: {type: string}
+        task_name: {type: string}
+        description: {type: string}
+        handler_version: {type: string}
+        status: {type: string, enum: [ACTIVE, ORPHANED, DISABLED]}
+        schedule: {$ref: '#/components/schemas/Schedule'}
+        last_execution:
+          type: [object, 'null']
+          properties:
+            execution_id: {type: string}
+            status: {$ref: '#/components/schemas/ExecutionStatus'}
+            finished_at: {type: string, format: date-time}
+    TaskPage:
+      type: object
+      properties:
+        list: {type: array, items: {$ref: '#/components/schemas/Task'}}
+        total: {type: integer}
+        page: {type: integer}
+        limit: {type: integer}
+    TaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            input_schema: {type: [object, 'null']}
+            schema_hash: {type: string}
+            default_cron: {type: [string, 'null']}
+            providers:
+              type: array
+              items:
+                type: object
+                properties:
+                  instance_id: {type: string}
+                  handler_version: {type: string}
+                  handler_major: {type: integer}
+                  schema_hash: {type: string}
+                  status: {$ref: '#/components/schemas/InstanceStatus'}
+            versions:
+              type: array
+              items:
+                type: object
+                properties:
+                  handler_version: {type: string}
+                  handler_major: {type: integer}
+                  schema_hash: {type: string}
+                  first_seen_at: {type: string, format: date-time}
+    TriggerResult:
+      type: object
+      required: [execution_id, status]
+      properties:
+        execution_id: {type: string}
+        status: {$ref: '#/components/schemas/ExecutionStatus'}
+        idempotent_replay: {type: boolean}
+    ExecutionStatus: {type: string, enum: [PENDING, QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, SKIPPED]}
+    AttemptStatus: {type: string, enum: [CREATED, DISPATCHING, ACKNOWLEDGED, RUNNING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, LOST]}
+    Execution:
+      type: object
+      properties:
+        execution_id: {type: string}
+        task_id: {type: integer}
+        task_code: {type: string}
+        service_id: {type: integer}
+        trigger_type: {type: string}
+        triggered_by: {type: string}
+        status: {$ref: '#/components/schemas/ExecutionStatus'}
+        status_reason: {type: [string, 'null']}
+        instance_id: {type: [string, 'null'], description: 当前/最后 Attempt 的实例}
+        git_commit: {type: [string, 'null']}
+        app_version: {type: [string, 'null']}
+        scheduled_at: {type: [string, 'null'], format: date-time}
+        created_at: {type: string, format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        duration_ms: {type: [integer, 'null']}
+        attempt_count: {type: integer}
+    ExecutionPage:
+      type: object
+      properties:
+        list: {type: array, items: {$ref: '#/components/schemas/Execution'}}
+        next_cursor: {type: [string, 'null']}
+    Attempt:
+      type: object
+      properties:
+        attempt_id: {type: string}
+        attempt_number: {type: integer}
+        instance_id: {type: [string, 'null']}
+        hostname: {type: [string, 'null']}
+        git_commit: {type: [string, 'null']}
+        app_version: {type: [string, 'null']}
+        status: {$ref: '#/components/schemas/AttemptStatus'}
+        status_reason: {type: [string, 'null']}
+        cancel_state: {type: string}
+        progress_percent: {type: [number, 'null']}
+        progress_message: {type: [string, 'null']}
+        lease_expires_at: {type: [string, 'null'], format: date-time}
+        dispatched_at: {type: [string, 'null'], format: date-time}
+        acked_at: {type: [string, 'null'], format: date-time}
+        started_at: {type: [string, 'null'], format: date-time}
+        finished_at: {type: [string, 'null'], format: date-time}
+        duration_ms: {type: [integer, 'null']}
+        exit_code: {type: [integer, 'null']}
+        error_code: {type: [string, 'null']}
+        error_message: {type: [string, 'null']}
+    ExecutionDetail:
+      allOf:
+        - $ref: '#/components/schemas/Execution'
+        - type: object
+          properties:
+            params: {type: [object, 'null']}
+            result: {}
+            error_code: {type: [string, 'null']}
+            error_message: {type: [string, 'null']}
+            retry_policy: {$ref: '#/components/schemas/RetryPolicy'}
+            attempts: {type: array, items: {$ref: '#/components/schemas/Attempt'}}
+    LogEntry:
+      type: object
+      properties:
+        attempt_id: {type: string}
+        attempt_number: {type: integer}
+        seq: {type: integer}
+        level: {type: string}
+        stream: {type: [string, 'null']}
+        message: {type: string}
+        fields: {type: [object, 'null']}
+        truncated: {type: boolean}
+        logged_at: {type: string, format: date-time}
+    Alert:
+      type: object
+      required: [type, severity, message]
+      properties:
+        type: {type: string, enum: [INSTANCE_OFFLINE, SERVICE_NO_ONLINE_INSTANCE, SCHEDULE_OVERDUE, EXECUTION_DISPATCH_OVERDUE, EXECUTION_PAST_DEADLINE]}
+        severity: {type: string, enum: [WARN, CRITICAL]}
+        service_id: {type: integer, description: '无值时省略'}
+        service_code: {type: string, description: '无值时省略'}
+        task_id: {type: integer, description: '仅 SCHEDULE_OVERDUE / EXECUTION_*'}
+        task_code: {type: string, description: '仅 SCHEDULE_OVERDUE / EXECUTION_*'}
+        instance_id: {type: string, description: '仅 INSTANCE_OFFLINE'}
+        execution_id: {type: string, description: '仅 EXECUTION_*'}
+        since: {type: string, format: date-time, description: '离线时间 / 应触发时间 / deadline 等；无值时省略'}
+        message: {type: string}
+    DeploymentRegister:
+      type: object
+      required: [service_code, environment, deployment_version, git_commit, build_id, deployment_status]
+      properties:
+        service_code: {type: string}
+        environment: {type: string, example: dev}
+        deployment_version: {type: string}
+        git_commit: {type: string}
+        build_id: {type: string}
+        build_url: {type: string}
+        deployment_status: {type: string, enum: [PENDING, DEPLOYING, SUCCEEDED, FAILED, ROLLED_BACK]}
+        set_expected: {type: boolean, default: true, description: 'SUCCEEDED 时把该版本设为预期版本'}
+        deployed_at: {type: string, format: date-time}
+    Deployment:
+      type: object
+      properties:
+        source: {type: string, enum: [API, MANUAL]}
+        id: {type: integer}
+        service_code: {type: string}
+        environment: {type: string}
+        deployment_version: {type: string}
+        git_commit: {type: string}
+        build_id: {type: string}
+        build_url: {type: string}
+        deployment_status: {type: string}
+        is_expected: {type: boolean}
+        deployed_at: {type: [string, 'null'], format: date-time}
+    VersionReconciliation:
+      type: object
+      properties:
+        service_id: {type: integer}
+        service_code: {type: string}
+        environment: {type: string}
+        expected_version: {type: [string, 'null']}
+        expected_git_commit: {type: [string, 'null']}
+        last_deployment: {$ref: '#/components/schemas/Deployment'}
+        running:
+          type: array
+          items:
+            type: object
+            properties:
+              instance_id: {type: string}
+              app_version: {type: string}
+              git_commit: {type: string}
+              status: {$ref: '#/components/schemas/InstanceStatus'}
+              last_heartbeat_at: {type: string, format: date-time}
+              started_at: {type: string, format: date-time}
+              matches_expected: {type: boolean}
+        state:
+          type: string
+          enum: [CONSISTENT, BEHIND, MIXED, NO_ONLINE_INSTANCE, STALE_PROCESS, MISSING_TASK_DEFINITION, NO_EXPECTED_VERSION]
+    AuditEntry:
+      type: object
+      properties:
+        id: {type: integer}
+        operator_source: {type: string}
+        operator_id: {type: string}
+        operator_name: {type: [string, 'null']}
+        action: {type: string}
+        permission: {type: [string, 'null']}
+        resource_type: {type: string}
+        resource_id: {type: [string, 'null']}
+        request_id: {type: [string, 'null']}
+        client_ip: {type: [string, 'null']}
+        before_data: {}
+        after_data: {}
+        result: {type: string}
+        error_message: {type: [string, 'null']}
+        created_at: {type: string, format: date-time}
+    AuditPage:
+      type: object
+      required: [list, next_cursor]
+      properties:
+        list: {type: array, items: {$ref: '#/components/schemas/AuditEntry'}}
+        next_cursor: {type: [string, 'null']}

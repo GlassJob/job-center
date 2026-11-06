@@ -499,3 +499,93 @@ func strPtr(s string) *string {
 	}
 	return &s
 }
+
+func (s *Service) APITrigger(ctx context.Context, in TriggerInput) (*TriggerResult, int, error) {
+	if in.IdempotencyKey == "" {
+		return nil, 400, apperr.New(apperr.KindInvalid, "PARAMS_INVALID", "Idempotency-Key required")
+	}
+	if existing, err := s.store.Q().GetExecutionByIdempotency(ctx, in.TaskID, in.IdempotencyKey); err == nil {
+		out := &TriggerResult{ExecutionID: existing.ExecutionID, Status: existing.Status, IdempotentReplay: true}
+		if existing.CurrentAttemptID != nil {
+			out.AttemptID = *existing.CurrentAttemptID
+		}
+		return out, 200, nil
+	} else if !errors.Is(err, repo.ErrNotFound) {
+		return nil, 503, err
+	}
+	detail, err := s.store.Q().GetTask(ctx, in.TaskID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			return nil, 404, apperr.New(apperr.KindNotFound, "NOT_FOUND", "task not found")
+		}
+		return nil, 503, err
+	}
+	if detail.Status != "ACTIVE" {
+		return nil, 400, apperr.New(apperr.KindInvalid, "TASK_DISABLED", "task is not active")
+	}
+	if len(in.Params) == 0 {
+		in.Params = json.RawMessage(`{}`)
+	}
+	hv := detail.HandlerVersion
+	major := 0
+	if v, err := parseMajor(hv); err == nil {
+		major = v
+	}
+	retry := json.RawMessage(`{"max_attempts":1}`)
+	timeoutSec := 3600
+	if detail.Schedule != nil {
+		if len(detail.Schedule.RetryPolicy) > 0 {
+			retry = detail.Schedule.RetryPolicy
+		}
+		if detail.Schedule.TimeoutSeconds > 0 {
+			timeoutSec = detail.Schedule.TimeoutSeconds
+		}
+	}
+	maxAttempts := 1
+	var rp struct {
+		MaxAttempts int `json:"max_attempts"`
+	}
+	_ = json.Unmarshal(retry, &rp)
+	if rp.MaxAttempts > 0 {
+		maxAttempts = rp.MaxAttempts
+	}
+	execID := idgen.NewULID()
+	e := &repo.Execution{
+		ExecutionID: execID, TaskID: detail.ID, ServiceID: detail.ServiceID, TaskCode: detail.TaskCode,
+		TriggerType: "API", TriggeredBy: "api:" + in.Client, Params: in.Params,
+		IdempotencyKey: &in.IdempotencyKey, Status: "PENDING", HandlerVersion: &hv, HandlerMajor: &major,
+		SchemaHash: detail.SchemaHash, TimeoutSeconds: timeoutSec, RetryPolicy: retry,
+		MaxAttempts: maxAttempts, AttemptCount: 0,
+	}
+	if err := s.store.Q().InsertExecution(ctx, e); err != nil {
+		if repo.IsDuplicate(err) {
+			existing, e2 := s.store.Q().GetExecutionByIdempotency(ctx, in.TaskID, in.IdempotencyKey)
+			if e2 == nil {
+				return &TriggerResult{ExecutionID: existing.ExecutionID, Status: existing.Status, IdempotentReplay: true}, 200, nil
+			}
+		}
+		return nil, 503, err
+	}
+	_ = s.store.Q().InsertEvent(ctx, execID, "", "EXECUTION_STATE", "", "PENDING", "API", in.Client, "", nil)
+	_ = s.store.Q().InsertAudit(ctx, repo.Audit{
+		OperatorSource: "API", OperatorID: in.Client, Action: "task.trigger_api",
+		Permission: "api.trigger", ResourceType: "task", ResourceID: fmt.Sprintf("%d", in.TaskID),
+		Result: "SUCCESS", After: map[string]any{"execution_id": execID},
+	})
+	cand, err := s.store.Q().PickCandidate(ctx, detail.ID, major)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			if in.AllowWait {
+				return &TriggerResult{ExecutionID: execID, Status: "PENDING"}, 202, nil
+			}
+			_ = s.store.Q().FinalizeExecution(ctx, execID, "FAILED", "NO_AVAILABLE_INSTANCE", time.Now().UTC(), nil, "NO_AVAILABLE_INSTANCE", "no online instance")
+			return nil, 400, apperr.New(apperr.KindInvalid, "NO_AVAILABLE_INSTANCE", "no online compatible instance")
+		}
+		return nil, 503, err
+	}
+	attempt, err := s.dispatch(ctx, e, detail, cand)
+	if err != nil {
+		return nil, 503, err
+	}
+	return &TriggerResult{ExecutionID: execID, Status: "PENDING", AttemptID: attempt.AttemptID, InstanceID: cand.InstanceID}, 202, nil
+}

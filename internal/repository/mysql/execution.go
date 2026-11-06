@@ -556,3 +556,74 @@ func (q *Queries) ReleaseSlotAndWake(ctx context.Context, executionID string, ta
 	_, err = q.WakeNextQueued(ctx, taskID, slot)
 	return err
 }
+
+type ExecutionFilter struct {
+	TaskID      int64
+	ServiceID   int64
+	Status      string
+	TriggerType string
+	From, To    *time.Time
+	CursorID    int64
+	Limit       int
+}
+
+func (q *Queries) ListExecutionsFiltered(ctx context.Context, f ExecutionFilter) ([]*Execution, int64, error) {
+	if f.Limit < 1 || f.Limit > 200 {
+		f.Limit = 50
+	}
+	where, args := " WHERE 1=1", []any{}
+	if f.TaskID > 0 {
+		where += " AND task_id=?"
+		args = append(args, f.TaskID)
+	}
+	if f.ServiceID > 0 {
+		where += " AND service_id=?"
+		args = append(args, f.ServiceID)
+	}
+	if f.Status != "" {
+		where += " AND status=?"
+		args = append(args, f.Status)
+	}
+	if f.TriggerType != "" {
+		where += " AND trigger_type=?"
+		args = append(args, f.TriggerType)
+	}
+	if f.From != nil {
+		where += " AND created_at>=?"
+		args = append(args, *f.From)
+	}
+	if f.To != nil {
+		where += " AND created_at<=?"
+		args = append(args, *f.To)
+	}
+	if f.CursorID > 0 {
+		where += " AND id<?"
+		args = append(args, f.CursorID)
+	}
+	args = append(args, f.Limit+1)
+	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
+		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
+		FROM job_execution`+where+` ORDER BY id DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []*Execution
+	for rows.Next() {
+		e, err := scanExecution(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var next int64
+	if len(out) > f.Limit {
+		next = out[f.Limit-1].ID
+		out = out[:f.Limit]
+	}
+	return out, next, nil
+}

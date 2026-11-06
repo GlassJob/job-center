@@ -57,6 +57,7 @@ func (s *Server) MountExecutor(mux *http.ServeMux) {
 func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/health/live", s.live)
 	mux.HandleFunc("/health/ready", s.ready)
+	s.mountDocs(mux)
 
 	// 读接口：HMAC + X-JC-Operator 权限强制
 	mux.Handle("GET /v1/admin/overview", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminOverview)))
@@ -90,8 +91,9 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("POST /v1/admin/sse-tickets", s.AdminAuth("job.execution.log.view")(http.HandlerFunc(s.postSSETicket)))
 	mux.Handle("GET /v1/admin/executions/{execution_id}/events", s.sseOrHMAC("job.execution.log.view", s.streamExecutionEvents))
 
-	// 发布脚本 HMAC（无 Operator）
+	// 发布脚本与外部触发 HMAC（无 Operator）
 	mux.Handle("POST /v1/deployments", s.ClientAuth()(http.HandlerFunc(s.postPublicDeployment)))
+	mux.Handle("POST /v1/trigger/{service_code}/{task_code}", s.ClientAuth()(http.HandlerFunc(s.postAPITrigger)))
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {

@@ -30,15 +30,20 @@ type AdminClient struct {
 	Secret string `yaml:"secret"`
 	// MaxPerms 该客户端可代表操作员行使的权限上限；["*"] 表示不限。
 	MaxPerms []string `yaml:"max_perms"`
+	// AllowedTasks 外部 API 触发（POST /v1/trigger/{service_code}/{task_code}）任务白名单，支持 "*"、"<service>/*"、"<service>/<task>"。
+	AllowedTasks []string `yaml:"allowed_tasks"`
 }
 
 type Config struct {
-	NodeID string `yaml:"node_id"`
-	HTTP   struct {
+	NodeID      string `yaml:"node_id"`
+	DocsEnabled *bool  `yaml:"docs_enabled"`
+	HTTP        struct {
 		ExecutorAddr    string   `yaml:"executor_addr"`
 		AdminAddr       string   `yaml:"admin_addr"`
 		MaxBodyBytes    int64    `yaml:"max_body_bytes"`
 		ShutdownTimeout Duration `yaml:"shutdown_timeout"`
+		DocsEnabled     *bool    `yaml:"docs_enabled"`
+		OpenAPIFile     string   `yaml:"openapi_file"`
 	} `yaml:"http"`
 	Database struct {
 		DSN             string   `yaml:"dsn"`
@@ -101,6 +106,8 @@ func Default() *Config {
 	c.HTTP.AdminAddr = "127.0.0.1:8081"
 	c.HTTP.MaxBodyBytes = 1 << 20
 	c.HTTP.ShutdownTimeout = Duration(15 * time.Second)
+	docsOn := true
+	c.DocsEnabled = &docsOn
 	c.Database.MaxOpenConns = 50
 	c.Database.MaxIdleConns = 10
 	c.Database.ConnMaxLifetime = Duration(30 * time.Minute)
@@ -174,6 +181,17 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) error {
 	str("JC_LOG_LEVEL", &c.Log.Level)
 	str("JC_LOG_FORMAT", &c.Log.Format)
 	str("JC_ARCHIVE_DIR", &c.Archive.Dir)
+	str("JC_OPENAPI_FILE", &c.HTTP.OpenAPIFile)
+	for _, k := range []string{"JC_DOCS_ENABLED", "JC_HTTP_DOCS_ENABLED"} {
+		if v, ok := lookup(k); ok && strings.TrimSpace(v) != "" {
+			b, err := strconv.ParseBool(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("%s: %w", k, err)
+			}
+			c.DocsEnabled = &b
+			c.HTTP.DocsEnabled = &b
+		}
+	}
 	if v, ok := lookup("JC_ADMIN_CLIENT_SECRETS"); ok && v != "" {
 		// 格式：client:secret[,client:secret]；环境变量登记的客户端权限上限为 ["*"]，
 		// 需要更细的上限时使用 YAML。
@@ -224,4 +242,18 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("websocket.max_message_bytes must be >= 1024"))
 	}
 	return errors.Join(errs...)
+}
+
+// IsDocsEnabled 返回是否启用管理端口的 /openapi.yaml、/swagger/ 与 /docs（默认 true，http.docs_enabled 优先于顶层 docs_enabled）。
+func (c *Config) IsDocsEnabled() bool {
+	if c == nil {
+		return true
+	}
+	if c.HTTP.DocsEnabled != nil {
+		return *c.HTTP.DocsEnabled
+	}
+	if c.DocsEnabled != nil {
+		return *c.DocsEnabled
+	}
+	return true
 }

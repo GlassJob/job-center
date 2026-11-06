@@ -6,6 +6,8 @@ http:
   admin_addr: "127.0.0.1:8081" # 管理 API，仅内网
   max_body_bytes: 1048576
   shutdown_timeout: 15s
+  docs_enabled: true           # /openapi.yaml 与 /swagger/（生产建议设为 false 或 JC_DOCS_ENABLED=false）
+  openapi_file: ""             # 空 = 使用编译内嵌的 openapi.yaml
 database:
   # 连接会被强制设置 parseTime=true、loc=UTC、time_zone='+00:00'
   dsn: "job_center:<password>@tcp(127.0.0.1:3307)/job_center"
