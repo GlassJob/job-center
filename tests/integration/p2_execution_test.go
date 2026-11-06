@@ -198,6 +198,19 @@ func TestP2ManualExecutionLoop(t *testing.T) {
 		if code != 200 {
 			t.Fatalf("logs %d %s", code, body)
 		}
+		var logEnv struct {
+			Code string         `json:"code"`
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(body), &logEnv); err != nil || logEnv.Code != "OK" {
+			t.Fatalf("logs envelope: %v %s", err, body)
+		}
+		if _, ok := logEnv.Data["list"]; !ok {
+			t.Fatalf("logs missing list: %s", body)
+		}
+		if _, hasItems := logEnv.Data["items"]; hasItems {
+			t.Fatalf("logs must not return items: %s", body)
+		}
 	})
 
 	t.Run("fail_and_cancel_unconfirmed", func(t *testing.T) {

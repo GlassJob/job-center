@@ -8,7 +8,7 @@
 |---|------|------|
 | 1 | SSE 票据 `POST /v1/admin/sse-tickets`（60s、单执行、单次使用） | ✅ `security.TicketIssuer` + Admin HMAC |
 | 2 | SSE 事件流 `GET .../events`，`Last-Event-ID`/`cursor` 续传 | ✅ DB 补发 event+log+progress；15s `: ping`；终态 `end`；票据或 HMAC；连接上限 30min |
-| 3 | 日志增量 `after_seq`（+ `level` 最低级别） | ✅ `ListLogsFiltered`；响应同时带 `list`/`items`（兼容 P2 Admin 与 openapi） |
+| 3 | 日志增量 `after_seq`（+ `level` 最低级别） | ✅ `ListLogsFiltered`；已按决议收敛为 Envelope + `data.list`（不再带 `items`） |
 | 4 | overview 统计 | ✅ `GET /v1/admin/overview` Envelope；含 `version_mismatch_instance_count`、`today_timezone` |
 | 5 | 实例离线 / 任务逾期监控 | ✅ `monitoring.Watcher` 周期评估；告警写 WARN；`GET /v1/admin/alerts` 快照（openapi 未列，便于联调） |
 | 6 | 版本对账 | ✅ `GET /v1/admin/versions` Envelope（`data` 为数组）；状态机 `domain/version.State` |
@@ -33,6 +33,6 @@
 ## D. 相对文档的已知差距（可接受）
 
 - openapi `GET /versions`、`GET /deployments` 写成裸数组；**实现按 protocol-http.md §3 统一 Envelope**（GlassJob 已裁定走 Envelope，不以 openapi 裸数组为准）
-- openapi 日志响应写 `items` 且未标 Envelope；实现 Envelope + `list`/`items` 双字段
+- 日志响应已按团队决议统一为 Envelope + `data.list`（去掉 `items`）
 - 日志分区 DROP 依赖 MySQL 分区表；开发库若未分区则 ensure/drop 会记 WARN/跳过，DELETE 路径仍可用
 - `/metrics` 归档滞后指标、`GET /v1/admin/audits` → **P8**

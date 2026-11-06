@@ -139,8 +139,7 @@ func (s *Server) listExecutionLogs(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []map[string]any{}
 	}
-	// P2 对齐用 list；openapi 写 items——两者都返回，避免 Admin 轮询回归
-	writeOK(w, r, http.StatusOK, map[string]any{"list": items, "items": items, "next_after_seq": next, "has_more": more})
+	writeOK(w, r, http.StatusOK, map[string]any{"list": items, "next_after_seq": next, "has_more": more})
 }
 
 func writeExecErr(w http.ResponseWriter, r *http.Request, status int, err error) {
