@@ -34,6 +34,10 @@
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
         },
+        "error_code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
         "message": {
           "type": "string"
         },

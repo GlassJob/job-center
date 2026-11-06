@@ -19,6 +19,7 @@ type DueSchedule struct {
 	SchemaHash              *string
 	CronExpression          string
 	Timezone                *string
+	DefaultParams           json.RawMessage
 	TimeoutSeconds          int
 	ConcurrencyPolicy       string
 	ConcurrencyScope        string
@@ -38,7 +39,7 @@ func (q *Queries) ListDueSchedules(ctx context.Context, limit int) ([]*DueSchedu
 		limit = 200
 	}
 	rows, err := q.db.QueryContext(ctx, `SELECT sc.id, sc.task_id, d.service_id, d.task_code, d.task_name, d.handler_version, d.schema_hash,
-		sc.cron_expression, sc.timezone, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max,
+		sc.cron_expression, sc.timezone, sc.default_params, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max,
 		sc.retry_policy, sc.misfire_policy, sc.misfire_threshold_seconds, sc.catch_up_max, sc.next_fire_at, sc.version
 		FROM job_schedule sc
 		JOIN job_definition d ON d.id=sc.task_id
@@ -52,14 +53,17 @@ func (q *Queries) ListDueSchedules(ctx context.Context, limit int) ([]*DueSchedu
 	for rows.Next() {
 		var s DueSchedule
 		var tz, sh sql.NullString
-		var rp []byte
+		var rp, dp []byte
 		if err := rows.Scan(&s.ScheduleID, &s.TaskID, &s.ServiceID, &s.TaskCode, &s.TaskName, &s.HandlerVersion, &sh,
-			&s.CronExpression, &tz, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope, &s.MaxConcurrency, &s.QueueMax,
+			&s.CronExpression, &tz, &dp, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope, &s.MaxConcurrency, &s.QueueMax,
 			&rp, &s.MisfirePolicy, &s.MisfireThresholdSeconds, &s.CatchUpMax, &s.NextFireAt, &s.Version); err != nil {
 			return nil, err
 		}
 		s.Timezone, s.SchemaHash = ptrStr(tz), ptrStr(sh)
 		s.RetryPolicy = json.RawMessage(rp)
+		if len(dp) > 0 {
+			s.DefaultParams = json.RawMessage(dp)
+		}
 		s.NextFireAt = s.NextFireAt.UTC()
 		out = append(out, &s)
 	}
@@ -69,7 +73,7 @@ func (q *Queries) ListDueSchedules(ctx context.Context, limit int) ([]*DueSchedu
 // LockScheduleForUpdate 在事务内锁调度行；若已非到期返回 ErrNotFound。
 func (q *Queries) LockScheduleForUpdate(ctx context.Context, scheduleID int64) (*DueSchedule, error) {
 	row := q.db.QueryRowContext(ctx, `SELECT sc.id, sc.task_id, d.service_id, d.task_code, d.task_name, d.handler_version, d.schema_hash,
-		sc.cron_expression, sc.timezone, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max,
+		sc.cron_expression, sc.timezone, sc.default_params, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max,
 		sc.retry_policy, sc.misfire_policy, sc.misfire_threshold_seconds, sc.catch_up_max, sc.next_fire_at, sc.version
 		FROM job_schedule sc
 		JOIN job_definition d ON d.id=sc.task_id
@@ -77,9 +81,9 @@ func (q *Queries) LockScheduleForUpdate(ctx context.Context, scheduleID int64) (
 		FOR UPDATE`, scheduleID)
 	var s DueSchedule
 	var tz, sh sql.NullString
-	var rp []byte
+	var rp, dp []byte
 	err := row.Scan(&s.ScheduleID, &s.TaskID, &s.ServiceID, &s.TaskCode, &s.TaskName, &s.HandlerVersion, &sh,
-		&s.CronExpression, &tz, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope, &s.MaxConcurrency, &s.QueueMax,
+		&s.CronExpression, &tz, &dp, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope, &s.MaxConcurrency, &s.QueueMax,
 		&rp, &s.MisfirePolicy, &s.MisfireThresholdSeconds, &s.CatchUpMax, &s.NextFireAt, &s.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -89,6 +93,9 @@ func (q *Queries) LockScheduleForUpdate(ctx context.Context, scheduleID int64) (
 	}
 	s.Timezone, s.SchemaHash = ptrStr(tz), ptrStr(sh)
 	s.RetryPolicy = json.RawMessage(rp)
+	if len(dp) > 0 {
+		s.DefaultParams = json.RawMessage(dp)
+	}
 	s.NextFireAt = s.NextFireAt.UTC()
 	return &s, nil
 }

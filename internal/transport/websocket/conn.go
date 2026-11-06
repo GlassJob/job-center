@@ -151,6 +151,8 @@ func (c *Conn) handle(ctx context.Context, raw []byte) error {
 		return c.onTaskResult(ctx, env, "progress")
 	case protocol.TypeTaskLog:
 		return c.onTaskResult(ctx, env, "log")
+	case protocol.TypeTaskCheckpoint:
+		return c.onTaskResult(ctx, env, "checkpoint")
 	case protocol.TypeTaskCompleted:
 		return c.onTaskResult(ctx, env, "completed")
 	case protocol.TypeTaskFailed:
@@ -199,6 +201,12 @@ func (c *Conn) onTaskResult(ctx context.Context, env protocol.Envelope, kind str
 			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid log", false, env.MessageID)
 		}
 		ack, err = c.exec.OnLog(ctx, sess.InstanceID, m)
+	case "checkpoint":
+		var m protocol.TaskCheckpoint
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid checkpoint", false, env.MessageID)
+		}
+		ack, err = c.exec.OnCheckpoint(ctx, sess.InstanceID, m)
 	case "completed":
 		var m protocol.TaskCompleted
 		if err := json.Unmarshal(env.Data, &m); err != nil {

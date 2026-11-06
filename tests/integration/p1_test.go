@@ -314,10 +314,10 @@ func cleanup(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
 		"DELETE FROM job_instance_task", "DELETE FROM job_execution_log", "DELETE FROM job_execution_attempt", "DELETE FROM job_execution_event",
-		"DELETE FROM job_execution", "DELETE FROM job_schedule WHERE task_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))", "DELETE FROM job_definition_version WHERE definition_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))",
+		"DELETE FROM job_execution", "DELETE FROM job_task_state WHERE task_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))", "DELETE FROM job_schedule WHERE task_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))", "DELETE FROM job_definition_version WHERE definition_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))",
 		"DELETE FROM job_definition WHERE service_id NOT IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php'))", "DELETE FROM job_instance", "DELETE FROM job_service_credential WHERE service_id NOT IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php'))",
 		"DELETE FROM job_deployment", "DELETE FROM job_archive_run",
-		"DELETE FROM job_service WHERE service_code IN ('demo.svc','p5.svc','p7.svc','p8.svc')", "DELETE FROM job_operation_audit",
+		"DELETE FROM job_service WHERE service_code IN ('demo.svc','p5.svc','p7.svc','p8.svc','state.svc')", "DELETE FROM job_operation_audit",
 	} {
 		if _, err := db.Exec(q); err != nil {
 			// some tables may not exist yet in partial migrate — ignore

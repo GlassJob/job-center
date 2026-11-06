@@ -28,6 +28,7 @@ const (
 	TypeTaskStarted        = "task.started"
 	TypeTaskProgress       = "task.progress"
 	TypeTaskLog            = "task.log"
+	TypeTaskCheckpoint     = "task.checkpoint"
 	TypeTaskCompleted      = "task.completed"
 	TypeTaskFailed         = "task.failed"
 	TypeTaskCancel         = "task.cancel"
@@ -41,7 +42,7 @@ const (
 // ExecutorToCenter 列出 Executor 可发送的类型（其余为中心下行类型，收到即 PROTOCOL_INVALID_MESSAGE）。
 var ExecutorToCenter = map[string]bool{
 	TypeAuthRequest: true, TypeServiceRegister: true, TypeServiceHeartbeat: true, TypeServiceUnregister: true,
-	TypeTaskExecuteAck: true, TypeTaskStarted: true, TypeTaskProgress: true, TypeTaskLog: true,
+	TypeTaskExecuteAck: true, TypeTaskStarted: true, TypeTaskProgress: true, TypeTaskLog: true, TypeTaskCheckpoint: true,
 	TypeTaskCompleted: true, TypeTaskFailed: true, TypeTaskCancelAck: true, TypeTaskCancelled: true,
 	TypeSystemError: true,
 }

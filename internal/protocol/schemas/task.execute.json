@@ -71,6 +71,15 @@
           "type": "string",
           "format": "date-time"
         },
+        "state": {
+          "type": "object",
+          "description": "任务当前持久化状态/游标（未初始化时下发 {}）"
+        },
+        "state_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前状态乐观锁版本号（未初始化时为 0）"
+        },
         "trigger_type": {
           "enum": [
             "CRON",

@@ -38,6 +38,13 @@
           "minimum": 0
         },
         "result": {},
+        "next_state": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "完成时原子推进的新状态对象（≤ 64 KiB；未传或 null 保持原状态不变）"
+        },
         "exit_code": {
           "type": "integer"
         }

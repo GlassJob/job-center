@@ -76,6 +76,7 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/instances", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListInstances)))
 	mux.Handle("GET /v1/admin/tasks", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminListTasks)))
 	mux.Handle("GET /v1/admin/tasks/{task_id}", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminGetTask)))
+	mux.Handle("GET /v1/admin/tasks/{task_id}/state", s.AdminAuth("job.task.view")(http.HandlerFunc(s.getTaskState)))
 	mux.Handle("GET /v1/admin/versions", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListVersions)))
 	mux.Handle("GET /v1/admin/deployments", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListDeployments)))
 	mux.Handle("GET /v1/admin/alerts", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListAlerts)))
@@ -93,6 +94,8 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/enabled", s.AdminAuth("job.task.update")(http.HandlerFunc(s.putTaskEnabled)))
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/schedule", s.AdminAuth("job.schedule.update")(http.HandlerFunc(s.putTaskSchedule)))
+	mux.Handle("PUT /v1/admin/tasks/{task_id}/state", s.AdminAuth("job.task.update")(http.HandlerFunc(s.putTaskState)))
+	mux.Handle("DELETE /v1/admin/tasks/{task_id}/state", s.AdminAuth("job.task.update")(http.HandlerFunc(s.deleteTaskState)))
 	mux.Handle("POST /v1/admin/tasks/{task_id}/executions", s.AdminAuth("job.task.execute")(http.HandlerFunc(s.postTaskExecution)))
 	mux.Handle("GET /v1/admin/executions", s.AdminAuth("job.execution.view")(http.HandlerFunc(s.listExecutions)))
 	mux.Handle("GET /v1/admin/executions/{execution_id}", s.AdminAuth("job.execution.view")(http.HandlerFunc(s.getExecution)))

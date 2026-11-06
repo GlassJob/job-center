@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GlassJob/job-center/internal/domain/schedule"
@@ -22,9 +25,8 @@ func (s *Server) putTaskEnabled(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "bad task_id", nil)
 		return
 	}
-	match := r.Header.Get("If-Match")
-	ver, err := strconv.ParseInt(match, 10, 64)
-	if err != nil || match == "" {
+	ver, hasMatch, err := parseIntIfMatch(r.Header.Get("If-Match"))
+	if err != nil || !hasMatch {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "If-Match version required", nil)
 		return
 	}
@@ -83,13 +85,23 @@ func (s *Server) putTaskSchedule(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "bad task_id", nil)
 		return
 	}
-	ver, err := strconv.ParseInt(r.Header.Get("If-Match"), 10, 64)
-	if err != nil || r.Header.Get("If-Match") == "" {
+	ver, hasMatch, err := parseIntIfMatch(r.Header.Get("If-Match"))
+	if err != nil || !hasMatch {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "If-Match version required", nil)
 		return
 	}
+	rawBody, err := io.ReadAll(io.LimitReader(r.Body, s.maxBody()))
+	if err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
+		return
+	}
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &rawFields); err != nil || rawFields == nil {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "JSON object body required", nil)
+		return
+	}
 	var patch map[string]any
-	if err := decodeJSONBody(r, &patch); err != nil {
+	if err := json.Unmarshal(rawBody, &patch); err != nil {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
 		return
 	}
@@ -108,6 +120,19 @@ func (s *Server) putTaskSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applySchedulePatch(cur, patch)
+	if rawDP, hasDP := rawFields["default_params"]; hasDP {
+		trimmed := bytes.TrimSpace(rawDP)
+		if bytes.Equal(trimmed, []byte("null")) {
+			cur.DefaultParams = nil
+		} else {
+			clean, verr := task.ValidateJSONObject(trimmed, task.MaxParamsBytes)
+			if verr != nil {
+				writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "default_params: "+verr.Error(), nil)
+				return
+			}
+			cur.DefaultParams = clean
+		}
+	}
 	if err := schedule.ValidateTimezone(cur.Timezone); err != nil {
 		writeAPIError(w, r, http.StatusUnprocessableEntity, "TIMEZONE_INVALID", err.Error(), nil)
 		return
@@ -120,6 +145,20 @@ func (s *Server) putTaskSchedule(w http.ResponseWriter, r *http.Request) {
 		if _, err := task.ValidateCron(*cur.CronExpression); err != nil {
 			writeAPIError(w, r, http.StatusUnprocessableEntity, "CRON_INVALID", err.Error(), nil)
 			return
+		}
+	}
+	// 若任务声明了 input_schema，同步校验 default_params（或 CRON 下缺省空对象 {}）
+	if detail, derr := s.store.Q().GetTask(r.Context(), taskID); derr == nil && detail != nil && len(detail.InputSchema) > 0 {
+		if len(cur.DefaultParams) > 0 {
+			if errs, verr := task.ValidateParamsAgainstSchema(detail.InputSchema, cur.DefaultParams); verr != nil {
+				writeAPIError(w, r, http.StatusUnprocessableEntity, "PARAMS_SCHEMA_INVALID", verr.Error(), map[string]any{"errors": errs})
+				return
+			}
+		} else if cur.ScheduleType == "CRON" {
+			if errs, verr := task.ValidateParamsAgainstSchema(detail.InputSchema, []byte(`{}`)); verr != nil {
+				writeAPIError(w, r, http.StatusUnprocessableEntity, "PARAMS_SCHEMA_INVALID", verr.Error(), map[string]any{"errors": errs})
+				return
+			}
 		}
 	}
 	// 若当前 enabled，按新 cron 重算 next_fire_at
@@ -321,4 +360,36 @@ func (s *Server) postCronPreview(w http.ResponseWriter, r *http.Request) {
 		cur = n
 	}
 	writeOK(w, r, http.StatusOK, map[string]any{"valid": true, "next_fire_times": out})
+}
+
+func cleanIfMatchToken(h string) string {
+	s := strings.TrimSpace(h)
+	if strings.HasPrefix(s, "W/") || strings.HasPrefix(s, "w/") {
+		s = strings.TrimSpace(s[2:])
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+	return strings.TrimSpace(s)
+}
+
+func parseIntIfMatch(h string) (int64, bool, error) {
+	tok := cleanIfMatchToken(h)
+	if tok == "" {
+		return 0, false, nil
+	}
+	v, err := strconv.ParseInt(tok, 10, 64)
+	return v, true, err
+}
+
+func parseUintIfMatch(h string) (*uint64, error) {
+	tok := cleanIfMatchToken(h)
+	if tok == "" || tok == "*" {
+		return nil, nil
+	}
+	v, err := strconv.ParseUint(tok, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }

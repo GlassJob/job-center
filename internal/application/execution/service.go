@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/GlassJob/job-center/internal/application/apperr"
 	"github.com/GlassJob/job-center/internal/domain/schedule"
+	"github.com/GlassJob/job-center/internal/domain/task"
 	"github.com/GlassJob/job-center/internal/infrastructure/idgen"
 	"github.com/GlassJob/job-center/internal/infrastructure/security"
 	"github.com/GlassJob/job-center/internal/protocol"
@@ -185,10 +187,19 @@ func (s *Service) dispatch(ctx context.Context, e *repo.Execution, detail *repo.
 	if len(params) == 0 {
 		params = json.RawMessage(`{}`)
 	}
+	ts, err := s.store.Q().GetTaskState(ctx, e.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	statePayload := ts.State
+	if len(statePayload) == 0 {
+		statePayload = json.RawMessage(`{}`)
+	}
 	msg := protocol.TaskExecute{
 		ExecutionID: e.ExecutionID, AttemptID: attemptID, AttemptNumber: a.AttemptNumber,
 		LeaseToken: token, LeaseExpiresAt: protocol.FormatTime(leaseExp), TaskCode: e.TaskCode, TaskName: detail.TaskName,
-		Params: params, TimeoutSeconds: e.TimeoutSeconds, DeadlineAt: protocol.FormatTime(deadline),
+		Params: params, State: statePayload, StateVersion: ts.Version,
+		TimeoutSeconds: e.TimeoutSeconds, DeadlineAt: protocol.FormatTime(deadline),
 		TriggerType: e.TriggerType, HandlerVersion: cand.HandlerVersion,
 	}
 	if err := s.sender.Send(cand.InstanceID, protocol.TypeTaskExecute, msg); err != nil {
@@ -259,7 +270,7 @@ func (s *Service) OnLog(ctx context.Context, sessInstance string, msg protocol.T
 	}
 	n, err := s.store.Q().InsertLogs(ctx, a.ExecutionID, a.AttemptID, entries)
 	if err != nil {
-		ra := &protocol.TaskResultAck{Status: "RETRY_LATER", AttemptID: msg.AttemptID, ErrorCode: protocol.ErrStorageUnavailable, Message: err.Error()}
+		ra := &protocol.TaskResultAck{Status: "RETRY_LATER", AttemptID: msg.AttemptID, Code: protocol.ErrStorageUnavailable, ErrorCode: protocol.ErrStorageUnavailable, Message: err.Error()}
 		return ra, nil
 	}
 	ack := okAck(msg.AttemptID)
@@ -271,24 +282,177 @@ func (s *Service) OnLog(ctx context.Context, sessInstance string, msg protocol.T
 	return ack, nil
 }
 
-func (s *Service) OnCompleted(ctx context.Context, sessInstance string, msg protocol.TaskCompleted) (*protocol.TaskResultAck, error) {
-	a, err := s.loadAndCheckLease(ctx, msg.AttemptID, msg.LeaseToken, sessInstance)
+// OnCheckpoint 处理中途游标持久化（task.checkpoint）：
+// 事务内锁 job_execution_attempt，校验 lease_token、实例归属、未过期、活跃态（ACKNOWLEDGED|RUNNING）、
+// 仍为 execution.current_attempt_id 且 cancel_state == 'NONE'，通过后推进 job_task_state(version+1) 并写 CHECKPOINT 事件；
+// 否则写 STALE_RESULT_REJECTED 并回 REJECTED(LEASE_INVALID)。
+func (s *Service) OnCheckpoint(ctx context.Context, sessInstance string, msg protocol.TaskCheckpoint) (*protocol.TaskResultAck, error) {
+	cleanState, err := task.ValidateJSONObject(msg.State, task.MaxStateBytes)
 	if err != nil {
-		return reject(msg.AttemptID, err), nil
+		return reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrProtocolInvalidMessage, "state: "+err.Error())), nil
+	}
+	var ack *protocol.TaskResultAck
+	txErr := s.store.InTx(ctx, func(q *repo.Queries) error {
+		a, leaseExpired, err := q.GetAttemptForUpdate(ctx, msg.AttemptID)
+		if err != nil {
+			if errors.Is(err, repo.ErrNotFound) {
+				ack = reject(msg.AttemptID, apperr.New(apperr.KindNotFound, protocol.ErrAttemptNotFound, "attempt not found"))
+				return nil
+			}
+			return err
+		}
+		e, err := q.GetExecutionForUpdate(ctx, a.ExecutionID)
+		if err != nil {
+			return err
+		}
+		var rejectReason string
+		switch {
+		case a.InstanceID == nil || *a.InstanceID != sessInstance:
+			rejectReason = "instance mismatch"
+		case a.LeaseToken == nil || *a.LeaseToken != msg.LeaseToken:
+			rejectReason = "lease_token mismatch"
+		case leaseExpired:
+			rejectReason = "lease expired"
+		case a.Status != "ACKNOWLEDGED" && a.Status != "RUNNING":
+			rejectReason = "attempt not active: " + a.Status
+		case e.CurrentAttemptID == nil || *e.CurrentAttemptID != msg.AttemptID:
+			rejectReason = "stale attempt"
+		case a.CancelState != "" && a.CancelState != "NONE":
+			rejectReason = "cancel_state=" + a.CancelState
+		}
+		if rejectReason != "" {
+			_ = q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "STALE_RESULT_REJECTED", a.Status, a.Status,
+				"EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": rejectReason, "source": "task.checkpoint"})
+			ack = reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, rejectReason))
+			return nil
+		}
+		newVer, err := q.UpsertTaskStateByAttempt(ctx, e.TaskID, cleanState, e.ExecutionID, a.AttemptID)
+		if err != nil {
+			return err
+		}
+		if err := q.InsertEvent(ctx, e.ExecutionID, a.AttemptID, "CHECKPOINT", a.Status, a.Status,
+			"EXECUTOR", sessInstance, sessInstance, map[string]any{"state_version": newVer}); err != nil {
+			return err
+		}
+		_, _ = q.RenewLease(ctx, a.AttemptID, msg.LeaseToken, time.Now().UTC().Add(s.leaseTTL))
+		ack = okAck(msg.AttemptID)
+		return nil
+	})
+	if txErr != nil {
+		return &protocol.TaskResultAck{
+			Status: "RETRY_LATER", AttemptID: msg.AttemptID,
+			Code: protocol.ErrStorageUnavailable, ErrorCode: protocol.ErrStorageUnavailable, Message: txErr.Error(),
+		}, nil
+	}
+	return ack, nil
+}
+
+func (s *Service) OnCompleted(ctx context.Context, sessInstance string, msg protocol.TaskCompleted) (*protocol.TaskResultAck, error) {
+	trimmedNext := bytes.TrimSpace(msg.NextState)
+	hasNextState := len(trimmedNext) > 0 && !bytes.Equal(trimmedNext, []byte("null"))
+	var cleanNextState json.RawMessage
+	if hasNextState {
+		var err error
+		cleanNextState, err = task.ValidateJSONObject(trimmedNext, task.MaxStateBytes)
+		if err != nil {
+			return reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrProtocolInvalidMessage, "next_state: "+err.Error())), nil
+		}
 	}
 	finished, _ := parseTime(msg.FinishedAt)
 	if finished.IsZero() {
 		finished = time.Now().UTC()
 	}
-	status := "SUCCEEDED"
-	if a.CancelState != "NONE" && a.CancelState != "STOPPED" {
-		// 真实完成优先，不标 CANCELLED
+
+	var (
+		ack           *protocol.TaskResultAck
+		execID        string
+		taskID        int64
+		execFinalized bool
+		replayed      bool
+	)
+	txErr := s.store.InTx(ctx, func(q *repo.Queries) error {
+		a, leaseExpired, err := q.GetAttemptForUpdate(ctx, msg.AttemptID)
+		if err != nil {
+			if errors.Is(err, repo.ErrNotFound) {
+				ack = reject(msg.AttemptID, apperr.New(apperr.KindNotFound, protocol.ErrAttemptNotFound, "attempt not found"))
+				return nil
+			}
+			return err
+		}
+		if a.LeaseToken == nil || *a.LeaseToken != msg.LeaseToken {
+			_ = q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "STALE_RESULT_REJECTED", a.Status, a.Status,
+				"EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "lease_token mismatch"})
+			ack = reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "lease_token mismatch"))
+			return nil
+		}
+		if a.InstanceID == nil || *a.InstanceID != sessInstance {
+			_ = q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "STALE_RESULT_REJECTED", a.Status, a.Status,
+				"EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "instance mismatch"})
+			ack = reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "instance mismatch"))
+			return nil
+		}
+		// 重复重放幂等：已终态 SUCCEEDED 的同 attempt_id 直接回 OK，不重复累加 job_task_state.version
+		if a.Status == "SUCCEEDED" {
+			replayed = true
+			ack = okAck(msg.AttemptID)
+			return nil
+		}
+		e, err := q.GetExecutionForUpdate(ctx, a.ExecutionID)
+		if err != nil {
+			return err
+		}
+		if e.CurrentAttemptID == nil || *e.CurrentAttemptID != msg.AttemptID {
+			_ = q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "STALE_RESULT_REJECTED", a.Status, a.Status,
+				"EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "stale attempt"})
+			ack = reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "stale attempt"))
+			return nil
+		}
+		if leaseExpired || a.Status == "LOST" || a.Status == "FAILED" || a.Status == "CANCELLED" || a.Status == "TIMED_OUT" {
+			_ = q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "STALE_RESULT_REJECTED", a.Status, a.Status,
+				"EXECUTOR", sessInstance, sessInstance, map[string]any{"reason": "lease expired or terminal: " + a.Status})
+			ack = reject(msg.AttemptID, apperr.New(apperr.KindInvalid, protocol.ErrLeaseInvalid, "lease expired or attempt no longer active"))
+			return nil
+		}
+
+		status := "SUCCEEDED"
+		if err := q.FinalizeAttempt(ctx, a.AttemptID, status, "", finished, msg.Result, "", "", ""); err != nil {
+			return err
+		}
+		ok, err := q.FinalizeExecution(ctx, a.ExecutionID, status, "", finished, msg.Result, "", "")
+		if err != nil {
+			return err
+		}
+		execFinalized = ok
+		execID = a.ExecutionID
+		taskID = e.TaskID
+
+		var evPayload any
+		if hasNextState {
+			newVer, err := q.UpsertTaskStateByAttempt(ctx, e.TaskID, cleanNextState, e.ExecutionID, a.AttemptID)
+			if err != nil {
+				return err
+			}
+			evPayload = map[string]any{"state_version": newVer}
+		}
+		if err := q.InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, status, "EXECUTOR", sessInstance, sessInstance, evPayload); err != nil {
+			return err
+		}
+		ack = okAck(msg.AttemptID)
+		return nil
+	})
+	if txErr != nil {
+		return &protocol.TaskResultAck{
+			Status: "RETRY_LATER", AttemptID: msg.AttemptID,
+			Code: protocol.ErrStorageUnavailable, ErrorCode: protocol.ErrStorageUnavailable, Message: txErr.Error(),
+		}, nil
 	}
-	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, status, "", finished, msg.Result, "", "", "")
-	_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, status, "", finished, msg.Result, "", "")
-	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, status, "EXECUTOR", sessInstance, sessInstance, nil)
-	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
-	return okAck(msg.AttemptID), nil
+	if ack != nil && ack.Status == "OK" && !replayed {
+		if execFinalized {
+			s.dispatchTerminalWebhookAsync(execID)
+		}
+		s.wakeAfterTerminal(ctx, execID, taskID)
+	}
+	return ack, nil
 }
 
 func (s *Service) OnFailed(ctx context.Context, sessInstance string, msg protocol.TaskFailed) (*protocol.TaskResultAck, error) {
@@ -487,7 +651,7 @@ func reject(attemptID string, err error) *protocol.TaskResultAck {
 	if ae != nil {
 		msg = ae.Message
 	}
-	return &protocol.TaskResultAck{Status: "REJECTED", AttemptID: attemptID, ErrorCode: code, Message: msg}
+	return &protocol.TaskResultAck{Status: "REJECTED", AttemptID: attemptID, Code: code, ErrorCode: code, Message: msg}
 }
 
 func randomToken() (string, error) {

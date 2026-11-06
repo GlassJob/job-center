@@ -13,7 +13,8 @@ import (
 
 var (
 	ErrNotFound  = errors.New("not found")
-	ErrDuplicate = errors.New("duplicate key")
+	ErrDuplicate       = errors.New("duplicate key")
+	ErrVersionConflict = errors.New("version conflict")
 )
 
 // DBTX 由 *sql.DB 与 *sql.Tx 实现。

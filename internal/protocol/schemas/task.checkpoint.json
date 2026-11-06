@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jobcenter.local/schemas/ws/1.0/task.checkpoint.json",
+  "title": "task.checkpoint",
+  "description": "方向：E→C",
+  "allOf": [
+    {
+      "$ref": "envelope.json"
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.checkpoint"
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "attempt_id",
+        "lease_token",
+        "state"
+      ],
+      "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "lease_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "lease_token（fencing token）"
+        },
+        "state": {
+          "type": "object",
+          "description": "中途保存的任务状态/游标对象（≤ 64 KiB）"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

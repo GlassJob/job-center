@@ -11,6 +11,8 @@ type TaskExecute struct {
 	TaskCode       string          `json:"task_code"`
 	TaskName       string          `json:"task_name,omitempty"`
 	Params         json.RawMessage `json:"params"`
+	State          json.RawMessage `json:"state"`
+	StateVersion   uint64          `json:"state_version"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	DeadlineAt     string          `json:"deadline_at"`
 	TriggerType    string          `json:"trigger_type,omitempty"`
@@ -53,11 +55,18 @@ type TaskLog struct {
 	Dropped    int            `json:"dropped,omitempty"`
 }
 
+type TaskCheckpoint struct {
+	AttemptID  string          `json:"attempt_id"`
+	LeaseToken string          `json:"lease_token"`
+	State      json.RawMessage `json:"state"`
+}
+
 type TaskCompleted struct {
 	AttemptID  string          `json:"attempt_id"`
 	LeaseToken string          `json:"lease_token"`
 	FinishedAt string          `json:"finished_at"`
 	Result     json.RawMessage `json:"result,omitempty"`
+	NextState  json.RawMessage `json:"next_state,omitempty"`
 }
 
 type TaskFailedError struct {
@@ -96,9 +105,10 @@ type TaskCancelled struct {
 }
 
 type TaskResultAck struct {
-	Status           string `json:"status"` // OK|REJECTED|RETRY_LATER
-	AttemptID        string `json:"attempt_id"`
-	ErrorCode        string `json:"error_code,omitempty"`
-	Message          string `json:"message,omitempty"`
-	AckedThroughSeq  *int64 `json:"acked_through_seq,omitempty"`
+	Status          string `json:"status"` // OK|REJECTED|RETRY_LATER
+	AttemptID       string `json:"attempt_id"`
+	Code            string `json:"code,omitempty"`
+	ErrorCode       string `json:"error_code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	AckedThroughSeq *int64 `json:"acked_through_seq,omitempty"`
 }

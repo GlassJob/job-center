@@ -73,3 +73,25 @@ func TestTaskAllowed(t *testing.T) {
 		t.Fatal("allowed rules")
 	}
 }
+
+func TestValidateJSONObjectAndParams(t *testing.T) {
+	if _, err := ValidateJSONObject([]byte(`{"cursor":"abc","n":1}`), MaxStateBytes); err != nil {
+		t.Fatalf("valid object failed: %v", err)
+	}
+	for _, bad := range []string{``, `null`, `[]`, `"str"`, `123`, `{"a":1} trailing`} {
+		if _, err := ValidateJSONObject([]byte(bad), MaxStateBytes); err == nil {
+			t.Fatalf("expected error for %q", bad)
+		}
+	}
+	if _, err := ValidateJSONObject([]byte(`{"x":"1234567890"}`), 8); err == nil {
+		t.Fatal("expected size limit error")
+	}
+
+	schema := []byte(`{"type":"object","required":["shop_id"],"properties":{"shop_id":{"type":"integer"}}}`)
+	if errs, err := ValidateParamsAgainstSchema(schema, []byte(`{"shop_id":42}`)); err != nil || len(errs) != 0 {
+		t.Fatalf("expected valid params, got err=%v errs=%v", err, errs)
+	}
+	if errs, err := ValidateParamsAgainstSchema(schema, []byte(`{"shop_id":"wrong"}`)); err == nil || len(errs) == 0 {
+		t.Fatalf("expected invalid params error, got err=%v errs=%v", err, errs)
+	}
+}

@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -152,6 +153,7 @@ type Schedule struct {
 	ScheduleType            string          `json:"schedule_type"`
 	CronExpression          *string         `json:"cron_expression"`
 	Timezone                *string         `json:"timezone"`
+	DefaultParams           json.RawMessage `json:"default_params"`
 	EffectiveTimezone       string          `json:"effective_timezone"`
 	Enabled                 bool            `json:"enabled"`
 	ManualEnabled           bool            `json:"manual_enabled"`
@@ -172,7 +174,7 @@ type Schedule struct {
 	UpdatedBy               *string         `json:"updated_by"`
 }
 
-const scheduleCols = `task_id, schedule_type, cron_expression, timezone, enabled, manual_enabled, timeout_seconds, concurrency_policy, concurrency_scope,
+const scheduleCols = `task_id, schedule_type, cron_expression, timezone, default_params, enabled, manual_enabled, timeout_seconds, concurrency_policy, concurrency_scope,
   max_concurrency, queue_max, retry_policy, misfire_policy, misfire_threshold_seconds, catch_up_max, dispatch_strategy, next_fire_at, last_fire_at,
   config_source, version, updated_by`
 
@@ -180,8 +182,8 @@ func scanSchedule(sc interface{ Scan(...any) error }) (*Schedule, error) {
 	var s Schedule
 	var cronE, tz, ub sql.NullString
 	var nf, lf sql.NullTime
-	var rp []byte
-	if err := sc.Scan(&s.TaskID, &s.ScheduleType, &cronE, &tz, &s.Enabled, &s.ManualEnabled, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope,
+	var rp, dp []byte
+	if err := sc.Scan(&s.TaskID, &s.ScheduleType, &cronE, &tz, &dp, &s.Enabled, &s.ManualEnabled, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope,
 		&s.MaxConcurrency, &s.QueueMax, &rp, &s.MisfirePolicy, &s.MisfireThresholdSeconds, &s.CatchUpMax, &s.DispatchStrategy, &nf, &lf,
 		&s.ConfigSource, &s.Version, &ub); err != nil {
 		return nil, err
@@ -189,6 +191,9 @@ func scanSchedule(sc interface{ Scan(...any) error }) (*Schedule, error) {
 	s.CronExpression, s.Timezone, s.UpdatedBy = ptrStr(cronE), ptrStr(tz), ptrStr(ub)
 	s.NextFireAt, s.LastFireAt = ptrTime(nf), ptrTime(lf)
 	s.RetryPolicy = json.RawMessage(rp)
+	if len(dp) > 0 {
+		s.DefaultParams = json.RawMessage(dp)
+	}
 	return &s, nil
 }
 
@@ -202,12 +207,20 @@ func (q *Queries) GetSchedule(ctx context.Context, taskID int64) (*Schedule, err
 
 // UpdateScheduleCAS 乐观锁更新调度参数（不含 enabled）；成功后 config_source=ADMIN、version+1。
 // 返回受影响行数（0=版本冲突或不存在）。
+func defaultParamsArg(raw json.RawMessage) any {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || bytes.Equal(t, []byte("null")) {
+		return nil
+	}
+	return string(t)
+}
+
 func (q *Queries) UpdateScheduleCAS(ctx context.Context, expectedVersion int64, s *Schedule, updatedBy string) (int64, error) {
-	res, err := q.db.ExecContext(ctx, `UPDATE job_schedule SET schedule_type=?, cron_expression=?, timezone=?, manual_enabled=?, timeout_seconds=?,
+	res, err := q.db.ExecContext(ctx, `UPDATE job_schedule SET schedule_type=?, cron_expression=?, timezone=?, default_params=?, manual_enabled=?, timeout_seconds=?,
 		concurrency_policy=?, concurrency_scope=?, max_concurrency=?, queue_max=?, retry_policy=?, misfire_policy=?, misfire_threshold_seconds=?,
 		catch_up_max=?, dispatch_strategy=?, next_fire_at=?, config_source='ADMIN', version=version+1, updated_by=?
 		WHERE task_id=? AND version=?`,
-		s.ScheduleType, s.CronExpression, s.Timezone, s.ManualEnabled, s.TimeoutSeconds, s.ConcurrencyPolicy, s.ConcurrencyScope,
+		s.ScheduleType, s.CronExpression, s.Timezone, defaultParamsArg(s.DefaultParams), s.ManualEnabled, s.TimeoutSeconds, s.ConcurrencyPolicy, s.ConcurrencyScope,
 		s.MaxConcurrency, s.QueueMax, string(s.RetryPolicy), s.MisfirePolicy, s.MisfireThresholdSeconds, s.CatchUpMax, s.DispatchStrategy,
 		s.NextFireAt, updatedBy, s.TaskID, expectedVersion)
 	if err != nil {
@@ -264,6 +277,7 @@ type TaskDetail struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 	SchemaHash  *string         `json:"schema_hash"`
 	DefaultCron *string         `json:"default_cron"`
+	TaskState   *TaskState      `json:"task_state"`
 	Providers   []TaskProvider  `json:"providers"`
 	Versions    []TaskVersion   `json:"versions"`
 }
@@ -276,7 +290,7 @@ type TaskFilter struct {
 }
 
 const taskSelect = `SELECT d.id, d.service_id, s.service_code, d.task_code, d.task_name, d.description, d.handler_version, d.status, d.last_registered_at,
-  ` + "sc.task_id, sc.schedule_type, sc.cron_expression, sc.timezone, sc.enabled, sc.manual_enabled, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max, sc.retry_policy, sc.misfire_policy, sc.misfire_threshold_seconds, sc.catch_up_max, sc.dispatch_strategy, sc.next_fire_at, sc.last_fire_at, sc.config_source, sc.version, sc.updated_by" + `
+  ` + "sc.task_id, sc.schedule_type, sc.cron_expression, sc.timezone, sc.default_params, sc.enabled, sc.manual_enabled, sc.timeout_seconds, sc.concurrency_policy, sc.concurrency_scope, sc.max_concurrency, sc.queue_max, sc.retry_policy, sc.misfire_policy, sc.misfire_threshold_seconds, sc.catch_up_max, sc.dispatch_strategy, sc.next_fire_at, sc.last_fire_at, sc.config_source, sc.version, sc.updated_by" + `
 FROM job_definition d JOIN job_service s ON s.id=d.service_id JOIN job_schedule sc ON sc.task_id=d.id`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
@@ -285,9 +299,9 @@ func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var s Schedule
 	var cronE, tz, ub sql.NullString
 	var nf, lf sql.NullTime
-	var rp []byte
+	var rp, dp []byte
 	ptrs := []any{&t.ID, &t.ServiceID, &t.ServiceCode, &t.TaskCode, &t.TaskName, &desc, &t.HandlerVersion, &t.Status, &t.LastRegisteredAt,
-		&s.TaskID, &s.ScheduleType, &cronE, &tz, &s.Enabled, &s.ManualEnabled, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope,
+		&s.TaskID, &s.ScheduleType, &cronE, &tz, &dp, &s.Enabled, &s.ManualEnabled, &s.TimeoutSeconds, &s.ConcurrencyPolicy, &s.ConcurrencyScope,
 		&s.MaxConcurrency, &s.QueueMax, &rp, &s.MisfirePolicy, &s.MisfireThresholdSeconds, &s.CatchUpMax, &s.DispatchStrategy, &nf, &lf,
 		&s.ConfigSource, &s.Version, &ub}
 	if err := sc.Scan(ptrs...); err != nil {
@@ -298,6 +312,9 @@ func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	s.CronExpression, s.Timezone, s.UpdatedBy = ptrStr(cronE), ptrStr(tz), ptrStr(ub)
 	s.NextFireAt, s.LastFireAt = ptrTime(nf), ptrTime(lf)
 	s.RetryPolicy = json.RawMessage(rp)
+	if len(dp) > 0 {
+		s.DefaultParams = json.RawMessage(dp)
+	}
 	t.Schedule = &s
 	return &t, nil
 }
@@ -355,6 +372,11 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (*TaskDetail, error) {
 		d.InputSchema = json.RawMessage(schema)
 	}
 	d.SchemaHash, d.DefaultCron = ptrStr(hash), ptrStr(dc)
+	ts, err := q.GetTaskState(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	d.TaskState = ts
 	rows, err := q.db.QueryContext(ctx, `SELECT i.instance_id, it.handler_version, it.handler_major, it.schema_hash, i.status, i.app_version, i.git_commit
 		FROM job_instance_task it JOIN job_instance i ON i.id=it.instance_pk WHERE it.definition_id=? AND i.status<>'OFFLINE' ORDER BY i.id`, id)
 	if err != nil {

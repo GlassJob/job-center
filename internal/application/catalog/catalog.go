@@ -3,6 +3,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -274,6 +275,7 @@ type ScheduleUpdate struct {
 	ScheduleType            *string          `json:"schedule_type"`
 	CronExpression          json.RawMessage  `json:"cron_expression"`
 	Timezone                json.RawMessage  `json:"timezone"`
+	DefaultParams           json.RawMessage  `json:"default_params"`
 	Enabled                 *bool            `json:"enabled"`
 	ManualEnabled           *bool            `json:"manual_enabled"`
 	TimeoutSeconds          *int             `json:"timeout_seconds"`
@@ -337,6 +339,18 @@ func (s *Service) UpdateSchedule(ctx context.Context, a Actor, taskID, expectedV
 			v = nil
 		}
 		n.Timezone = v
+	}
+	if in.DefaultParams != nil {
+		t := bytes.TrimSpace(in.DefaultParams)
+		if bytes.Equal(t, []byte("null")) {
+			n.DefaultParams = nil
+		} else {
+			clean, err := task.ValidateJSONObject(t, task.MaxParamsBytes)
+			if err != nil {
+				return nil, invalid("PARAMS_INVALID", "default_params: "+err.Error())
+			}
+			n.DefaultParams = clean
+		}
 	}
 	setB := func(dst *bool, v *bool) {
 		if v != nil {
@@ -415,6 +429,17 @@ func (s *Service) UpdateSchedule(ctx context.Context, a Actor, taskID, expectedV
 		return nil, invalid("PARAMS_INVALID", "enabled requires schedule_type=CRON")
 	}
 
+	if detail, err := s.store.Q().GetTask(ctx, taskID); err == nil && detail != nil && len(detail.InputSchema) > 0 {
+		if len(n.DefaultParams) > 0 {
+			if errs, verr := task.ValidateParamsAgainstSchema(detail.InputSchema, n.DefaultParams); verr != nil {
+				return nil, &apperr.Error{Kind: apperr.KindInvalid, Code: "PARAMS_SCHEMA_INVALID", Message: verr.Error(), Details: map[string]any{"errors": errs}}
+			}
+		} else if n.ScheduleType == "CRON" {
+			if errs, verr := task.ValidateParamsAgainstSchema(detail.InputSchema, []byte(`{}`)); verr != nil {
+				return nil, &apperr.Error{Kind: apperr.KindInvalid, Code: "PARAMS_SCHEMA_INVALID", Message: verr.Error(), Details: map[string]any{"errors": errs}}
+			}
+		}
+	}
 	rows, err := s.store.Q().UpdateScheduleCAS(ctx, expectedVersion, &n, a.Client+":"+a.Operator.ID)
 	if err != nil {
 		return nil, apperr.Storage(err)

@@ -197,6 +197,7 @@ func setupBenchEnv(b *testing.B) *benchEnv {
 		_, _ = db.ExecContext(cleanCtx, `DELETE a FROM job_execution_attempt a JOIN job_execution e ON a.execution_id=e.execution_id WHERE e.service_id=?`, svc.ID)
 		_, _ = db.ExecContext(cleanCtx, `DELETE FROM job_execution WHERE service_id=?`, svc.ID)
 		_, _ = db.ExecContext(cleanCtx, `DELETE it FROM job_instance_task it JOIN job_instance i ON it.instance_id=i.instance_id WHERE i.service_id=?`, svc.ID)
+		_, _ = db.ExecContext(cleanCtx, `DELETE ts FROM job_task_state ts JOIN job_definition d ON ts.task_id=d.id WHERE d.service_id=?`, svc.ID)
 		_, _ = db.ExecContext(cleanCtx, `DELETE s FROM job_schedule s JOIN job_definition d ON s.task_id=d.id WHERE d.service_id=?`, svc.ID)
 		_, _ = db.ExecContext(cleanCtx, `DELETE FROM job_definition WHERE service_id=?`, svc.ID)
 		_, _ = db.ExecContext(cleanCtx, `DELETE FROM job_instance WHERE service_id=?`, svc.ID)

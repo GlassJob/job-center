@@ -201,9 +201,13 @@ func createWithConcurrency(ctx context.Context, q *repo.Queries, locked *repo.Du
 
 func insertFire(ctx context.Context, q *repo.Queries, locked *repo.DueSchedule, scheduledAt time.Time, trigger, status, reason string, slot *string, queuedAt *time.Time, rp schedule.RetryPolicy, major int, payload map[string]any) error {
 	execID := idgen.NewULID()
+	params := locked.DefaultParams
+	if len(params) == 0 {
+		params = json.RawMessage(`{}`)
+	}
 	in := repo.CronExecutionInput{
 		ExecutionID: execID, ScheduleID: locked.ScheduleID, TaskID: locked.TaskID, ServiceID: locked.ServiceID,
-		TaskCode: locked.TaskCode, TriggerType: trigger, ScheduledAt: scheduledAt, Params: json.RawMessage(`{}`),
+		TaskCode: locked.TaskCode, TriggerType: trigger, ScheduledAt: scheduledAt, Params: params,
 		Status: status, StatusReason: reason, ConcurrencySlot: slot, HandlerVersion: locked.HandlerVersion,
 		HandlerMajor: major, SchemaHash: locked.SchemaHash, TimeoutSeconds: locked.TimeoutSeconds,
 		RetryPolicy: locked.RetryPolicy, MaxAttempts: rp.MaxAttempts, QueuedAt: queuedAt,

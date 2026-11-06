@@ -39,7 +39,7 @@ func TestSwaggerAndOpenAPIDefaultEnabled(t *testing.T) {
 	if spec.OpenAPI != "3.1.0" || len(spec.Paths) < 30 {
 		t.Fatalf("unexpected spec: openapi=%s paths=%d", spec.OpenAPI, len(spec.Paths))
 	}
-	for _, must := range []string{"/v1/admin/audits", "/metrics", "/openapi.yaml", "/swagger/", "/docs", "/v1/trigger/{service_code}/{task_code}", "/v1/trigger/executions/{execution_id}", "/v1/trigger/executions/{execution_id}/logs", "/v1/trigger/executions/{execution_id}/sse-ticket", "/v1/trigger/executions/{execution_id}/events", "/v1/trigger/executions/{execution_id}/cancel"} {
+	for _, must := range []string{"/v1/admin/audits", "/metrics", "/openapi.yaml", "/swagger/", "/docs", "/v1/trigger/{service_code}/{task_code}", "/v1/trigger/executions/{execution_id}", "/v1/trigger/executions/{execution_id}/logs", "/v1/trigger/executions/{execution_id}/sse-ticket", "/v1/trigger/executions/{execution_id}/events", "/v1/trigger/executions/{execution_id}/cancel", "/v1/admin/tasks/{task_id}/state"} {
 		if _, ok := spec.Paths[must]; !ok {
 			t.Errorf("missing path %s in embedded openapi.yaml", must)
 		}

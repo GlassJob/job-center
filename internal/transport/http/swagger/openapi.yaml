@@ -397,8 +397,81 @@ paths:
                   - type: object
                     properties:
                       data: {$ref: '#/components/schemas/Schedule'}
+        '400': {description: default_params 校验失败, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '409': {description: 版本冲突, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
         '422': {description: Cron/时区非法, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /v1/admin/tasks/{task_id}/state:
+    parameters: [{$ref: '#/components/parameters/TaskId'}]
+    get:
+      tags: [tasks]
+      summary: 获取任务持久化游标/状态（未初始化时返回 state={}, version=0）
+      x-permission: job.task.view
+      responses:
+        '200':
+          description: ok
+          headers:
+            ETag: {schema: {type: string}, description: '当前版本号，如 "0" 或 "3"'}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TaskState'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [tasks]
+      summary: 覆盖更新任务持久化游标/状态（支持 If-Match 乐观锁冲突返 409，写审计 task.state.update）
+      x-permission: job.task.update
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: '期望的 job_task_state.version（如 "3" 或 3；未初始化为 "0"）'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: {type: object, description: '新的任务状态 JSON 对象（≤ 64 KiB）'}
+      responses:
+        '200':
+          description: ok
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TaskState'}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: If-Match 版本冲突, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    delete:
+      tags: [tasks]
+      summary: 重置任务持久化游标为空对象 {}（version 继续 +1 避免 ABA，支持可选 If-Match，写审计 task.state.reset）
+      x-permission: job.task.update
+      parameters:
+        - {name: If-Match, in: header, required: false, schema: {type: string}, description: '可选期望的 job_task_state.version'}
+      responses:
+        '200':
+          description: ok
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/TaskState'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {description: If-Match 版本冲突, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   /v1/admin/cron/preview:
     post:
       tags: [tasks]
@@ -1061,6 +1134,7 @@ components:
         schedule_type: {type: string, enum: [CRON, NONE]}
         cron_expression: {type: [string, 'null']}
         timezone: {type: [string, 'null'], description: 'NULL = Job Center 服务器本地时区'}
+        default_params: {type: [object, 'null'], description: 'Cron / Catch-up 触发默认参数（≤ 64 KiB；NULL 触发时取 {}）'}
         effective_timezone: {type: string, readOnly: true, description: '实际生效的 IANA 时区'}
         enabled: {type: boolean}
         manual_enabled: {type: boolean}
@@ -1085,6 +1159,7 @@ components:
         schedule_type: {type: string, enum: [CRON, NONE]}
         cron_expression: {type: [string, 'null']}
         timezone: {type: [string, 'null'], description: 'NULL = 使用服务器本地时区'}
+        default_params: {type: [object, 'null'], description: 'Cron / Catch-up 触发默认参数（≤ 64 KiB；若任务有 input_schema 保存时同步校验）'}
         manual_enabled: {type: boolean}
         timeout_seconds: {type: integer, minimum: 1, maximum: 604800}
         concurrency_policy: {type: string, enum: [ALLOW, SKIP, QUEUE]}
@@ -1141,6 +1216,7 @@ components:
             input_schema: {type: [object, 'null']}
             schema_hash: {type: string}
             default_cron: {type: [string, 'null']}
+            task_state: {$ref: '#/components/schemas/TaskState'}
             providers:
               type: array
               items:
@@ -1160,6 +1236,16 @@ components:
                   handler_major: {type: integer}
                   schema_hash: {type: string}
                   first_seen_at: {type: string, format: date-time}
+    TaskState:
+      type: object
+      required: [state, version]
+      properties:
+        state: {type: object, description: '当前持久化游标/状态对象（未初始化为 {}）'}
+        version: {type: integer, minimum: 0, description: '单调递增乐观锁版本（未初始化为 0）'}
+        updated_by: {type: [string, 'null'], description: 'attempt:<attempt_id> 或 admin:<operator_id>'}
+        last_execution_id: {type: [string, 'null']}
+        last_attempt_id: {type: [string, 'null']}
+        updated_at: {type: [string, 'null'], format: date-time}
     SSETicketInfo:
       type: object
       required: [ticket, expires_at, url]

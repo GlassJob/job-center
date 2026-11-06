@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -180,4 +181,81 @@ func TaskAllowed(allowed []string, code string) bool {
 		}
 	}
 	return false
+}
+
+// MaxStateBytes 任务持久化状态与默认参数对象大小上限（64 KiB）。
+const MaxStateBytes = 64 << 10
+const MaxParamsBytes = 64 << 10
+
+// ValidateJSONObject 校验 raw 必须是顶层 JSON object 且编码后不超过 maxBytes。
+func ValidateJSONObject(raw []byte, maxBytes int) (json.RawMessage, error) {
+	if maxBytes <= 0 {
+		maxBytes = MaxStateBytes
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, errors.New("must be a JSON object")
+	}
+	if len(trimmed) > maxBytes {
+		return nil, fmt.Errorf("JSON object exceeds %d bytes", maxBytes)
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, errors.New("invalid JSON: trailing data")
+	}
+	if _, ok := doc.(map[string]any); !ok {
+		return nil, errors.New("must be a JSON object")
+	}
+	canonical, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	if len(canonical) > maxBytes {
+		return nil, fmt.Errorf("JSON object exceeds %d bytes", maxBytes)
+	}
+	return json.RawMessage(canonical), nil
+}
+
+// ValidateParamsAgainstSchema 用任务的 input_schema 校验参数对象；返回违反项明细（含 instance_path）。
+func ValidateParamsAgainstSchema(schemaRaw, paramsRaw []byte) ([]map[string]string, error) {
+	st := bytes.TrimSpace(schemaRaw)
+	if len(st) == 0 || bytes.Equal(st, []byte("null")) || bytes.Equal(st, []byte("{}")) {
+		return nil, nil
+	}
+	compiled, err := CompileSchema(st)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(paramsRaw))
+	if err != nil {
+		return nil, err
+	}
+	err = compiled.Validate(doc)
+	if err == nil {
+		return nil, nil
+	}
+	var ve *jsonschema.ValidationError
+	if errors.As(err, &ve) {
+		bo := ve.BasicOutput()
+		var out []map[string]string
+		for _, u := range bo.Errors {
+			if u.Error != nil {
+				out = append(out, map[string]string{
+					"instance_path": u.InstanceLocation,
+					"message":       u.Error.String(),
+				})
+			}
+		}
+		if len(out) == 0 {
+			out = []map[string]string{{"instance_path": "/" + strings.Join(ve.InstanceLocation, "/"), "message": ve.Error()}}
+		}
+		return out, ve
+	}
+	return nil, err
 }
