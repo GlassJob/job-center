@@ -9,7 +9,7 @@
 | versions / deployments Envelope | ✅ 保持 `{code,message,request_id,data}`；集成测试断言 `code=OK` | `0cdfc67` |
 | SSE progress 1/s 节流 | ✅ `domain/sse.ProgressThrottle` 每 Attempt ≤1 条/秒 | `0cdfc67` |
 
-## B. P8 交付
+## B. P8 交付（`3f7bac4`）
 
 | # | 要求 | 结果 |
 |---|------|------|
