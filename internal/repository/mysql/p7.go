@@ -270,6 +270,15 @@ func (q *Queries) GetServiceIDByCode(ctx context.Context, code string) (int64, e
 	return id, err
 }
 
+func (q *Queries) GetServiceCodeByID(ctx context.Context, id int64) (string, error) {
+	var code string
+	err := q.db.QueryRowContext(ctx, `SELECT service_code FROM job_service WHERE id=?`, id).Scan(&code)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return code, err
+}
+
 // UpsertDeployment 按 (service_id, environment, build_id) 幂等；SUCCEEDED+set_expected 时切换预期版本。须在事务内调用。
 func (q *Queries) UpsertDeployment(ctx context.Context, in DeploymentInput) (*Deployment, error) {
 	var payload any

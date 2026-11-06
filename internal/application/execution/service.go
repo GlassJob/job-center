@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GlassJob/job-center/internal/application/apperr"
@@ -23,10 +25,13 @@ type Sender interface {
 }
 
 type Service struct {
-	store    *repo.Store
-	sender   Sender
-	leaseTTL time.Duration
-	log      *slog.Logger
+	store           *repo.Store
+	sender          Sender
+	leaseTTL        time.Duration
+	log             *slog.Logger
+	clientSecrets   func(string) string
+	webhookHTTP     *http.Client
+	webhookBackoffs []time.Duration
 }
 
 func New(store *repo.Store, sender Sender, leaseTTL time.Duration, log *slog.Logger) *Service {
@@ -44,17 +49,25 @@ type TriggerInput struct {
 	Params         json.RawMessage
 	Reason         string
 	AllowWait      bool
+	CallbackURL    string
 	IdempotencyKey string
 	Operator       security.Operator
 	Client         string
 }
 
+type SSETicketBrief struct {
+	Ticket    string `json:"ticket"`
+	ExpiresAt string `json:"expires_at"`
+	URL       string `json:"url"`
+}
+
 type TriggerResult struct {
-	ExecutionID    string `json:"execution_id"`
-	Status         string `json:"status"`
-	AttemptID      string `json:"attempt_id,omitempty"`
-	InstanceID     string `json:"instance_id,omitempty"`
-	IdempotentReplay bool `json:"idempotent_replay,omitempty"`
+	ExecutionID      string          `json:"execution_id"`
+	Status           string          `json:"status"`
+	AttemptID        string          `json:"attempt_id,omitempty"`
+	InstanceID       string          `json:"instance_id,omitempty"`
+	IdempotentReplay bool            `json:"idempotent_replay,omitempty"`
+	SSETicket        *SSETicketBrief `json:"sse_ticket,omitempty"`
 }
 
 func (s *Service) ManualTrigger(ctx context.Context, in TriggerInput) (*TriggerResult, int, error) {
@@ -131,7 +144,7 @@ func (s *Service) ManualTrigger(ctx context.Context, in TriggerInput) (*TriggerR
 			if in.AllowWait {
 				return &TriggerResult{ExecutionID: execID, Status: "PENDING"}, 202, nil
 			}
-			_ = s.store.Q().FinalizeExecution(ctx, execID, "FAILED", "NO_AVAILABLE_INSTANCE", time.Now().UTC(), nil, "NO_AVAILABLE_INSTANCE", "no online instance")
+			_ = s.finalizeExecutionAndNotify(ctx, execID, "FAILED", "NO_AVAILABLE_INSTANCE", time.Now().UTC(), nil, "NO_AVAILABLE_INSTANCE", "no online instance")
 			return nil, 400, apperr.New(apperr.KindInvalid, "NO_AVAILABLE_INSTANCE", "no online compatible instance")
 		}
 		return nil, 503, err
@@ -192,7 +205,7 @@ func (s *Service) OnExecuteAck(ctx context.Context, sessInstance string, ack pro
 	}
 	if !ack.Accepted {
 		_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, "FAILED", "REJECTED_BY_EXECUTOR", time.Now().UTC(), nil, "REJECTED", "executor rejected", "")
-		_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, "FAILED", "REJECTED_BY_EXECUTOR", time.Now().UTC(), nil, "REJECTED", "executor rejected")
+		_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, "FAILED", "REJECTED_BY_EXECUTOR", time.Now().UTC(), nil, "REJECTED", "executor rejected")
 		return okAck(ack.AttemptID), nil
 	}
 	_ = s.store.Q().MarkAttemptAcked(ctx, a.AttemptID)
@@ -272,7 +285,7 @@ func (s *Service) OnCompleted(ctx context.Context, sessInstance string, msg prot
 		// 真实完成优先，不标 CANCELLED
 	}
 	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, status, "", finished, msg.Result, "", "", "")
-	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, "", finished, msg.Result, "", "")
+	_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, status, "", finished, msg.Result, "", "")
 	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, status, "EXECUTOR", sessInstance, sessInstance, nil)
 	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
@@ -304,7 +317,7 @@ func (s *Service) OnFailed(ctx context.Context, sessInstance string, msg protoco
 	}
 	// cancel_state≠NONE：不重试
 	if cancelState == "CANCEL_UNCONFIRMED" {
-		_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, "CANCEL_NOT_HONORED", finished, nil, msg.Error.Code, msg.Error.Message)
+		_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, status, "CANCEL_NOT_HONORED", finished, nil, msg.Error.Code, msg.Error.Message)
 		s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 		return okAck(msg.AttemptID), nil
 	}
@@ -321,7 +334,7 @@ func (s *Service) OnFailed(ctx context.Context, sessInstance string, msg protoco
 		_ = s.store.Q().InsertEvent(ctx, e.ExecutionID, a.AttemptID, "EXECUTION_STATE", e.Status, "PENDING", "SYSTEM", "", "", map[string]any{"reason": "RETRY", "delay_ms": delay.Milliseconds()})
 		return okAck(msg.AttemptID), nil
 	}
-	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, status, msg.Reason, finished, nil, msg.Error.Code, msg.Error.Message)
+	_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, status, msg.Reason, finished, nil, msg.Error.Code, msg.Error.Message)
 	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
 }
@@ -336,7 +349,7 @@ func (s *Service) OnCancelled(ctx context.Context, sessInstance string, msg prot
 		finished = time.Now().UTC()
 	}
 	_ = s.store.Q().FinalizeAttempt(ctx, a.AttemptID, "CANCELLED", msg.StoppedBy, finished, nil, "", "", "STOPPED")
-	_ = s.store.Q().FinalizeExecution(ctx, a.ExecutionID, "CANCELLED", msg.StoppedBy, finished, nil, "", "")
+	_ = s.finalizeExecutionAndNotify(ctx, a.ExecutionID, "CANCELLED", msg.StoppedBy, finished, nil, "", "")
 	_ = s.store.Q().InsertEvent(ctx, a.ExecutionID, a.AttemptID, "ATTEMPT_STATE", a.Status, "CANCELLED", "EXECUTOR", sessInstance, sessInstance, nil)
 	s.wakeAfterTerminal(ctx, a.ExecutionID, a.TaskID)
 	return okAck(msg.AttemptID), nil
@@ -366,6 +379,10 @@ type CancelResult struct {
 }
 
 func (s *Service) Cancel(ctx context.Context, executionID, reason string, grace int, op security.Operator) (*CancelResult, int, error) {
+	return s.CancelBy(ctx, executionID, reason, grace, "ADMIN", op.ID)
+}
+
+func (s *Service) CancelBy(ctx context.Context, executionID, reason string, grace int, actorSource, actorID string) (*CancelResult, int, error) {
 	e, err := s.store.Q().GetExecution(ctx, executionID)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
@@ -377,14 +394,18 @@ func (s *Service) Cancel(ctx context.Context, executionID, reason string, grace 
 		return nil, 409, apperr.New(apperr.KindConflict, "ALREADY_FINAL", "execution already final")
 	}
 	if e.CurrentAttemptID == nil {
-		_ = s.store.Q().FinalizeExecution(ctx, executionID, "CANCELLED", reason, time.Now().UTC(), nil, "", "")
+		_ = s.finalizeExecutionAndNotify(ctx, executionID, "CANCELLED", reason, time.Now().UTC(), nil, "", "")
 		return &CancelResult{ExecutionStatus: "CANCELLED", CancelState: "STOPPED"}, 202, nil
 	}
 	a, err := s.store.Q().GetAttempt(ctx, *e.CurrentAttemptID)
 	if err != nil {
 		return nil, 503, err
 	}
-	_ = s.store.Q().MarkExecutionCancelRequested(ctx, executionID, "admin:"+op.ID)
+	prefix := "admin:"
+	if actorSource == "API" {
+		prefix = "api:"
+	}
+	_ = s.store.Q().MarkExecutionCancelRequested(ctx, executionID, prefix+actorID)
 	_ = s.store.Q().SetCancelState(ctx, a.AttemptID, "REQUESTED")
 	state := "REQUESTED"
 	if a.InstanceID != nil && a.LeaseToken != nil {
@@ -400,7 +421,7 @@ func (s *Service) Cancel(ctx context.Context, executionID, reason string, grace 
 			state = "SENT"
 		}
 	}
-	_ = s.store.Q().InsertEvent(ctx, executionID, a.AttemptID, "CANCEL_REQUESTED", "", state, "ADMIN", op.ID, "", map[string]any{"reason": reason})
+	_ = s.store.Q().InsertEvent(ctx, executionID, a.AttemptID, "CANCEL_REQUESTED", "", state, actorSource, actorID, "", map[string]any{"reason": reason})
 	return &CancelResult{ExecutionStatus: e.Status, CancelState: state}, 202, nil
 }
 
@@ -549,10 +570,19 @@ func (s *Service) APITrigger(ctx context.Context, in TriggerInput) (*TriggerResu
 	if rp.MaxAttempts > 0 {
 		maxAttempts = rp.MaxAttempts
 	}
+	var trigCtx json.RawMessage
+	if in.Client != "" || strings.TrimSpace(in.CallbackURL) != "" || in.Reason != "" {
+		b, _ := json.Marshal(triggerContextMeta{
+			ClientID:    in.Client,
+			CallbackURL: strings.TrimSpace(in.CallbackURL),
+			Reason:      in.Reason,
+		})
+		trigCtx = b
+	}
 	execID := idgen.NewULID()
 	e := &repo.Execution{
 		ExecutionID: execID, TaskID: detail.ID, ServiceID: detail.ServiceID, TaskCode: detail.TaskCode,
-		TriggerType: "API", TriggeredBy: "api:" + in.Client, Params: in.Params,
+		TriggerType: "API", TriggeredBy: "api:" + in.Client, TriggerContext: trigCtx, Params: in.Params,
 		IdempotencyKey: &in.IdempotencyKey, Status: "PENDING", HandlerVersion: &hv, HandlerMajor: &major,
 		SchemaHash: detail.SchemaHash, TimeoutSeconds: timeoutSec, RetryPolicy: retry,
 		MaxAttempts: maxAttempts, AttemptCount: 0,
@@ -578,7 +608,7 @@ func (s *Service) APITrigger(ctx context.Context, in TriggerInput) (*TriggerResu
 			if in.AllowWait {
 				return &TriggerResult{ExecutionID: execID, Status: "PENDING"}, 202, nil
 			}
-			_ = s.store.Q().FinalizeExecution(ctx, execID, "FAILED", "NO_AVAILABLE_INSTANCE", time.Now().UTC(), nil, "NO_AVAILABLE_INSTANCE", "no online instance")
+			_ = s.finalizeExecutionAndNotify(ctx, execID, "FAILED", "NO_AVAILABLE_INSTANCE", time.Now().UTC(), nil, "NO_AVAILABLE_INSTANCE", "no online instance")
 			return nil, 400, apperr.New(apperr.KindInvalid, "NO_AVAILABLE_INSTANCE", "no online compatible instance")
 		}
 		return nil, 503, err

@@ -83,6 +83,10 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.serveExecutionEventStream(w, r, id)
+}
+
+func (s *Server) serveExecutionEventStream(w http.ResponseWriter, r *http.Request, id string) {
 	curRaw := r.Header.Get("Last-Event-ID")
 	if curRaw == "" {
 		curRaw = r.URL.Query().Get("cursor")
@@ -97,6 +101,7 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusInternalServerError, "UNAVAILABLE", "streaming unsupported", nil)
 		return
 	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -192,7 +197,20 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 			// 再拉一轮确保日志补齐
 			more, _ := s.store.Q().ListLogsAfterCursor(r.Context(), id, cur.AttemptNumber, cur.Seq, 1)
 			if len(more) == 0 {
-				writeEvent("end", "", map[string]any{"execution_status": ex.Status})
+				endPayload := map[string]any{"execution_status": ex.Status}
+				if len(ex.Result) > 0 {
+					endPayload["result"] = ex.Result
+				}
+				if ex.ErrorCode != nil {
+					endPayload["error_code"] = *ex.ErrorCode
+				}
+				if ex.ErrorMessage != nil {
+					endPayload["error_message"] = *ex.ErrorMessage
+				}
+				if ex.FinishedAt != nil {
+					endPayload["finished_at"] = ex.FinishedAt.UTC()
+				}
+				writeEvent("end", "", endPayload)
 				return true, nil
 			}
 		}

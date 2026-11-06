@@ -16,6 +16,7 @@ type Execution struct {
 	TaskCode         string          `json:"task_code"`
 	TriggerType      string          `json:"trigger_type"`
 	TriggeredBy      string          `json:"triggered_by"`
+	TriggerContext   json.RawMessage `json:"trigger_context,omitempty"`
 	Params           json.RawMessage `json:"params"`
 	IdempotencyKey   *string         `json:"idempotency_key,omitempty"`
 	Status           string          `json:"status"`
@@ -80,7 +81,7 @@ type CandidateInstance struct {
 }
 
 func (q *Queries) GetExecutionByIdempotency(ctx context.Context, taskID int64, key string) (*Execution, error) {
-	row := q.db.QueryRowContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+	row := q.db.QueryRowContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context, params, idempotency_key,
 		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
 		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
 		FROM job_execution WHERE task_id=? AND idempotency_key=?`, taskID, key)
@@ -88,7 +89,7 @@ func (q *Queries) GetExecutionByIdempotency(ctx context.Context, taskID int64, k
 }
 
 func (q *Queries) GetExecution(ctx context.Context, executionID string) (*Execution, error) {
-	row := q.db.QueryRowContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+	row := q.db.QueryRowContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context, params, idempotency_key,
 		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
 		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
 		FROM job_execution WHERE execution_id=?`, executionID)
@@ -97,11 +98,11 @@ func (q *Queries) GetExecution(ctx context.Context, executionID string) (*Execut
 
 func scanExecution(sc interface{ Scan(...any) error }) (*Execution, error) {
 	var e Execution
-	var params, retry, result []byte
+	var trigCtx, params, retry, result []byte
 	var idem, reason, hv, sh, cur, ec, em sql.NullString
 	var hm sql.NullInt64
 	var st, ft sql.NullTime
-	err := sc.Scan(&e.ID, &e.ExecutionID, &e.TaskID, &e.ServiceID, &e.TaskCode, &e.TriggerType, &e.TriggeredBy, &params, &idem,
+	err := sc.Scan(&e.ID, &e.ExecutionID, &e.TaskID, &e.ServiceID, &e.TaskCode, &e.TriggerType, &e.TriggeredBy, &trigCtx, &params, &idem,
 		&e.Status, &reason, &hv, &hm, &sh, &e.TimeoutSeconds, &retry, &e.MaxAttempts, &e.AttemptCount,
 		&cur, &st, &ft, &result, &ec, &em, &e.CreatedAt, &e.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -110,7 +111,7 @@ func scanExecution(sc interface{ Scan(...any) error }) (*Execution, error) {
 	if err != nil {
 		return nil, err
 	}
-	e.Params, e.RetryPolicy, e.Result = params, retry, result
+	e.TriggerContext, e.Params, e.RetryPolicy, e.Result = trigCtx, params, retry, result
 	e.IdempotencyKey, e.StatusReason = ptrStr(idem), ptrStr(reason)
 	e.HandlerVersion, e.SchemaHash, e.CurrentAttemptID = ptrStr(hv), ptrStr(sh), ptrStr(cur)
 	e.ErrorCode, e.ErrorMessage = ptrStr(ec), ptrStr(em)
@@ -127,7 +128,7 @@ func (q *Queries) InsertExecution(ctx context.Context, e *Execution) error {
 	_, err := q.db.ExecContext(ctx, `INSERT INTO job_execution(execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context,
 		params, idempotency_key, status, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts,
 		attempt_count, scheduled_at, queued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3))`,
-		e.ExecutionID, e.TaskID, e.ServiceID, e.TaskCode, e.TriggerType, e.TriggeredBy, nil,
+		e.ExecutionID, e.TaskID, e.ServiceID, e.TaskCode, e.TriggerType, e.TriggeredBy, nullJSON(e.TriggerContext),
 		nullJSON(e.Params), e.IdempotencyKey, e.Status, e.HandlerVersion, e.HandlerMajor, e.SchemaHash, e.TimeoutSeconds,
 		string(e.RetryPolicy), e.MaxAttempts, e.AttemptCount, time.Now().UTC())
 	return err
@@ -280,11 +281,15 @@ func (q *Queries) FinalizeAttempt(ctx context.Context, attemptID, status, reason
 	return err
 }
 
-func (q *Queries) FinalizeExecution(ctx context.Context, executionID, status, reason string, finishedAt time.Time, result json.RawMessage, errCode, errMsg string) error {
-	_, err := q.db.ExecContext(ctx, `UPDATE job_execution SET status=?, status_reason=?, finished_at=?, result=?, error_code=?, error_message=?, concurrency_slot=NULL, version=version+1
+func (q *Queries) FinalizeExecution(ctx context.Context, executionID, status, reason string, finishedAt time.Time, result json.RawMessage, errCode, errMsg string) (bool, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE job_execution SET status=?, status_reason=?, finished_at=?, result=?, error_code=?, error_message=?, concurrency_slot=NULL, version=version+1
 		WHERE execution_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','TIMED_OUT','SKIPPED')`,
 		status, nullStr(reason), finishedAt, nullJSON(result), nullStr(errCode), nullStr(errMsg), executionID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (q *Queries) InsertEvent(ctx context.Context, executionID, attemptID, eventType, from, to, actorType, actorID, instanceID string, payload any) error {
@@ -327,7 +332,7 @@ func (q *Queries) ListExecutions(ctx context.Context, taskID, serviceID int64, s
 		args = append(args, status)
 	}
 	args = append(args, limit)
-	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context, params, idempotency_key,
 		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
 		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
 		FROM job_execution`+where+` ORDER BY created_at DESC LIMIT ?`, args...)
@@ -495,7 +500,8 @@ func (q *Queries) ScheduleRetry(ctx context.Context, executionID string, nextAtt
 
 // FinalizeExecutionAfterLost 不再重试时 FAILED(LOST)。
 func (q *Queries) FinalizeExecutionAfterLost(ctx context.Context, executionID, reason, errCode string) error {
-	return q.FinalizeExecution(ctx, executionID, "FAILED", reason, time.Now().UTC(), nil, errCode, reason)
+	_, err := q.FinalizeExecution(ctx, executionID, "FAILED", reason, time.Now().UTC(), nil, errCode, reason)
+	return err
 }
 
 // ListPendingDispatch 领取待派发。
@@ -503,7 +509,7 @@ func (q *Queries) ListPendingDispatch(ctx context.Context, limit int) ([]*Execut
 	if limit < 1 {
 		limit = 50
 	}
-	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context, params, idempotency_key,
 		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
 		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
 		FROM job_execution
@@ -601,7 +607,7 @@ func (q *Queries) ListExecutionsFiltered(ctx context.Context, f ExecutionFilter)
 		args = append(args, f.CursorID)
 	}
 	args = append(args, f.Limit+1)
-	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, params, idempotency_key,
+	rows, err := q.db.QueryContext(ctx, `SELECT id, execution_id, task_id, service_id, task_code, trigger_type, triggered_by, trigger_context, params, idempotency_key,
 		status, status_reason, handler_version, handler_major, schema_hash, timeout_seconds, retry_policy, max_attempts, attempt_count,
 		current_attempt_id, started_at, finished_at, result, error_code, error_message, created_at, updated_at
 		FROM job_execution`+where+` ORDER BY id DESC LIMIT ?`, args...)

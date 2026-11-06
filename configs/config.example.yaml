@@ -18,6 +18,7 @@ security:
   credential_pepper: ""        # ≥16 字节随机串；修改会使全部现有凭据失效
   timestamp_skew: 300s
   nonce_ttl: 10m
+  callback_allowed_hosts: []   # 外部 callback_url 允许的目标域名白名单（空则走公网防 SSRF 校验）
   admin_clients:
     glassadmin:
       secret: ""

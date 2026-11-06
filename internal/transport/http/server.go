@@ -46,7 +46,17 @@ func New(db *sql.DB, store *repo.Store, cat *catalog.Service, cfg *config.Config
 	}
 }
 
-func (s *Server) SetExecution(exec *appexec.Service) { s.exec = exec }
+func (s *Server) SetExecution(exec *appexec.Service) {
+	s.exec = exec
+	if exec != nil {
+		exec.SetClientSecretLookup(func(clientID string) string {
+			if s.cfg == nil {
+				return ""
+			}
+			return s.cfg.Security.AdminClients[clientID].Secret
+		})
+	}
+}
 func (s *Server) SetWatcher(w *monitoring.Watcher)   { s.watcher = w }
 
 func (s *Server) MountExecutor(mux *http.ServeMux) {
@@ -91,9 +101,14 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("POST /v1/admin/sse-tickets", s.AdminAuth("job.execution.log.view")(http.HandlerFunc(s.postSSETicket)))
 	mux.Handle("GET /v1/admin/executions/{execution_id}/events", s.sseOrHMAC("job.execution.log.view", s.streamExecutionEvents))
 
-	// 发布脚本与外部触发 HMAC（无 Operator）
+	// 发布脚本与外部业务系统 HMAC（无 Operator，按 client_id + allowed_tasks 租户隔离）
 	mux.Handle("POST /v1/deployments", s.ClientAuth()(http.HandlerFunc(s.postPublicDeployment)))
 	mux.Handle("POST /v1/trigger/{service_code}/{task_code}", s.ClientAuth()(http.HandlerFunc(s.postAPITrigger)))
+	mux.Handle("GET /v1/trigger/executions/{execution_id}", s.ClientAuth()(http.HandlerFunc(s.getClientExecution)))
+	mux.Handle("GET /v1/trigger/executions/{execution_id}/logs", s.ClientAuth()(http.HandlerFunc(s.listClientExecutionLogs)))
+	mux.Handle("POST /v1/trigger/executions/{execution_id}/sse-ticket", s.ClientAuth()(http.HandlerFunc(s.postClientSSETicket)))
+	mux.Handle("GET /v1/trigger/executions/{execution_id}/events", s.sseOrClientHMAC(s.streamClientExecutionEvents))
+	mux.Handle("POST /v1/trigger/executions/{execution_id}/cancel", s.ClientAuth()(http.HandlerFunc(s.postClientCancelExecution)))
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {

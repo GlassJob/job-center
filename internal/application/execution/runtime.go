@@ -116,7 +116,7 @@ func (r *Runtime) expireLeases(ctx context.Context) error {
 		// cancel_state≠NONE → 不重试，直接 FAILED
 		if a.CancelState != "" && a.CancelState != "NONE" {
 			_ = r.svc.store.Q().FinalizeAttempt(ctx, a.AttemptID, "LOST", "CANCEL_NOT_HONORED", time.Now().UTC(), nil, "CANCEL_NOT_HONORED", "cancel not confirmed", "CANCEL_UNCONFIRMED")
-			_ = r.svc.store.Q().FinalizeExecution(ctx, a.ExecutionID, "FAILED", "CANCEL_NOT_HONORED", time.Now().UTC(), nil, "CANCEL_NOT_HONORED", "cancel not confirmed")
+			_ = r.svc.finalizeExecutionAndNotify(ctx, a.ExecutionID, "FAILED", "CANCEL_NOT_HONORED", time.Now().UTC(), nil, "CANCEL_NOT_HONORED", "cancel not confirmed")
 			r.afterTerminal(ctx, a.ExecutionID, a.TaskID)
 		}
 	}
@@ -134,7 +134,7 @@ func (r *Runtime) recoverLost(ctx context.Context) error {
 			continue
 		}
 		if a.CancelState != "" && a.CancelState != "NONE" {
-			_ = r.svc.store.Q().FinalizeExecution(ctx, a.ExecutionID, "FAILED", "CANCEL_NOT_HONORED", time.Now().UTC(), nil, "CANCEL_NOT_HONORED", "cancel not confirmed")
+			_ = r.svc.finalizeExecutionAndNotify(ctx, a.ExecutionID, "FAILED", "CANCEL_NOT_HONORED", time.Now().UTC(), nil, "CANCEL_NOT_HONORED", "cancel not confirmed")
 			r.afterTerminal(ctx, a.ExecutionID, a.TaskID)
 			continue
 		}
@@ -144,7 +144,7 @@ func (r *Runtime) recoverLost(ctx context.Context) error {
 			_ = r.svc.store.Q().ScheduleRetry(ctx, e.ExecutionID, time.Now().UTC().Add(delay), "RETRY_WAIT")
 			_ = r.svc.store.Q().InsertEvent(ctx, e.ExecutionID, a.AttemptID, "EXECUTION_STATE", e.Status, "PENDING", "SYSTEM", "lease-sweeper", "", map[string]any{"reason": "RETRY_ON_LOST", "delay_ms": delay.Milliseconds()})
 		} else {
-			_ = r.svc.store.Q().FinalizeExecution(ctx, e.ExecutionID, "FAILED", "LOST", time.Now().UTC(), nil, "LOST", "lease lost, retries exhausted")
+			_ = r.svc.finalizeExecutionAndNotify(ctx, e.ExecutionID, "FAILED", "LOST", time.Now().UTC(), nil, "LOST", "lease lost, retries exhausted")
 			r.afterTerminal(ctx, e.ExecutionID, e.TaskID)
 		}
 	}
@@ -190,11 +190,11 @@ func (r *Runtime) timeoutAttempts(ctx context.Context) error {
 		}
 		if rp.ShouldRetryTimeout(e.AttemptCount) && (a.CancelState == "NONE" || a.CancelState == "" || a.CancelState == "REQUESTED" || a.CancelState == "SENT" || a.CancelState == "ACKED") {
 			// docs: cancel_state≠NONE 一律不重试 — timeout cancel 也算 ≠NONE，故不重试
-			_ = r.svc.store.Q().FinalizeExecution(ctx, e.ExecutionID, "TIMED_OUT", "TIMEOUT_UNCONFIRMED", time.Now().UTC(), nil, "TIMEOUT", "deadline exceeded")
+			_ = r.svc.finalizeExecutionAndNotify(ctx, e.ExecutionID, "TIMED_OUT", "TIMEOUT_UNCONFIRMED", time.Now().UTC(), nil, "TIMEOUT", "deadline exceeded")
 			r.afterTerminal(ctx, e.ExecutionID, e.TaskID)
 			continue
 		}
-		_ = r.svc.store.Q().FinalizeExecution(ctx, e.ExecutionID, "TIMED_OUT", "TIMEOUT_UNCONFIRMED", time.Now().UTC(), nil, "TIMEOUT", "deadline exceeded")
+		_ = r.svc.finalizeExecutionAndNotify(ctx, e.ExecutionID, "TIMED_OUT", "TIMEOUT_UNCONFIRMED", time.Now().UTC(), nil, "TIMEOUT", "deadline exceeded")
 		r.afterTerminal(ctx, e.ExecutionID, e.TaskID)
 	}
 	return nil

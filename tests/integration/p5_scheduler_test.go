@@ -350,8 +350,8 @@ func cleanupP5(t *testing.T, db *sql.DB) {
 	t.Helper()
 	cleanupP5Execs(t, db)
 	for _, q := range []string{
-		"DELETE FROM job_instance_task", "DELETE FROM job_schedule", "DELETE FROM job_definition_version",
-		"DELETE FROM job_definition", "DELETE FROM job_instance", "DELETE FROM job_service_credential",
+		"DELETE FROM job_instance_task", "DELETE FROM job_schedule WHERE task_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))", "DELETE FROM job_definition_version WHERE definition_id NOT IN (SELECT id FROM job_definition WHERE service_id IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php')))",
+		"DELETE FROM job_definition WHERE service_id NOT IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php'))", "DELETE FROM job_instance", "DELETE FROM job_service_credential WHERE service_id NOT IN (SELECT id FROM job_service WHERE service_code IN ('sdk.demo','sdk.demo.php'))",
 		"DELETE FROM job_service WHERE service_code IN ('p5.svc','demo.svc')", "DELETE FROM job_operation_audit",
 		"DELETE FROM job_node_lease",
 	} {

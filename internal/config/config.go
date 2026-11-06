@@ -32,6 +32,8 @@ type AdminClient struct {
 	MaxPerms []string `yaml:"max_perms"`
 	// AllowedTasks 外部 API 触发（POST /v1/trigger/{service_code}/{task_code}）任务白名单，支持 "*"、"<service>/*"、"<service>/<task>"。
 	AllowedTasks []string `yaml:"allowed_tasks"`
+	// CallbackAllowedHosts 外部触发 callback_url 域名/IP 白名单（支持精确域名、IP、"*.example.com" 或 "*"）。
+	CallbackAllowedHosts []string `yaml:"callback_allowed_hosts"`
 }
 
 type Config struct {
@@ -52,10 +54,11 @@ type Config struct {
 		ConnMaxLifetime Duration `yaml:"conn_max_lifetime"`
 	} `yaml:"database"`
 	Security struct {
-		CredentialPepper string                 `yaml:"credential_pepper"`
-		AdminClients     map[string]AdminClient `yaml:"admin_clients"`
-		TimestampSkew    Duration               `yaml:"timestamp_skew"`
-		NonceTTL         Duration               `yaml:"nonce_ttl"`
+		CredentialPepper     string                 `yaml:"credential_pepper"`
+		AdminClients         map[string]AdminClient `yaml:"admin_clients"`
+		CallbackAllowedHosts []string               `yaml:"callback_allowed_hosts"`
+		TimestampSkew        Duration               `yaml:"timestamp_skew"`
+		NonceTTL             Duration               `yaml:"nonce_ttl"`
 	} `yaml:"security"`
 	WebSocket struct {
 		AuthTimeout        Duration `yaml:"auth_timeout"`

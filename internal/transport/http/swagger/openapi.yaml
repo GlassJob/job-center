@@ -746,7 +746,7 @@ paths:
   /v1/trigger/{service_code}/{task_code}:
     post:
       tags: [trigger]
-      summary: 外部系统 HTTP API 触发（任务书 5.1）；API 客户端须在白名单中被授权该任务
+      summary: 外部系统 HTTP API 触发（任务书 5.1）；API 客户端须在白名单中被授权该任务，支持随响应签发首张 SSE 票据与终态 Webhook 回调
       security:
         - hmacSignature: []
       parameters:
@@ -762,7 +762,10 @@ paths:
               required: [params]
               properties:
                 params: {type: object}
+                reason: {type: string, maxLength: 500}
                 allow_wait: {type: boolean, default: false, description: '无可用实例时是否进入 PENDING 等待'}
+                with_sse_ticket: {type: boolean, default: false, description: '为 true 时在响应 data.sse_ticket 直接附带首张 60s 单次绑定票据'}
+                callback_url: {type: string, format: uri, description: '可选终态回调 URL（仅 http/https，受 callback_allowed_hosts 白名单或防 SSRF 校验）；终态异步 POST 并附带 X-JC-Event: execution.finished 与客户端 HMAC 签名'}
       responses:
         '202':
           description: accepted
@@ -785,6 +788,132 @@ paths:
                     properties:
                       data: {$ref: '#/components/schemas/TriggerResult'}
         default: {$ref: '#/components/responses/Error'}
+  /v1/trigger/executions/{execution_id}:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [trigger]
+      summary: 外部业务系统查询执行详情（仅 Client HMAC，无 X-JC-Operator；仅放行当前 client_id 触发或 allowed_tasks 白名单内的执行）
+      security:
+        - hmacSignature: []
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/ExecutionDetail'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/trigger/executions/{execution_id}/logs:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [trigger]
+      summary: 外部业务系统增量拉取执行日志（仅 Client HMAC，按 client_id / allowed_tasks 隔离）
+      security:
+        - hmacSignature: []
+      parameters:
+        - {name: attempt_id, in: query, schema: {type: string}}
+        - {name: after_seq, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: level, in: query, schema: {type: string, enum: [DEBUG, INFO, WARN, ERROR]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [list, next_after_seq, has_more]
+                        properties:
+                          list: {type: array, items: {$ref: '#/components/schemas/LogEntry'}}
+                          next_after_seq: {type: integer}
+                          has_more: {type: boolean}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/trigger/executions/{execution_id}/sse-ticket:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    post:
+      tags: [trigger]
+      summary: 外部业务系统申请 60s 单次单执行绑定 SSE 票据（仅 Client HMAC，按 client_id / allowed_tasks 隔离）
+      security:
+        - hmacSignature: []
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/SSETicketInfo'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /v1/trigger/executions/{execution_id}/events:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    get:
+      tags: [trigger]
+      summary: 外部业务系统 SSE 实时事件流别名路由（支持 ?ticket= 直连或 Client HMAC，及 Last-Event-ID 续传；Nginx 仅需暴露 /v1/trigger/ 前缀）
+      security:
+        - sseTicket: []
+        - hmacSignature: []
+      parameters:
+        - {name: Last-Event-ID, in: header, schema: {type: string}, description: '游标 <event_id>:<attempt_number>:<seq>'}
+        - {name: cursor, in: query, schema: {type: string}, description: 与 Last-Event-ID 等价（首连指定）}
+      responses:
+        '200':
+          description: 'text/event-stream；event 类型：state | progress | log | end（end 含 execution_status 与最终 result/error）；每 15s 发送 ": ping" 注释'
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /v1/trigger/executions/{execution_id}/cancel:
+    parameters: [{$ref: '#/components/parameters/ExecutionId'}]
+    post:
+      tags: [trigger]
+      summary: 外部业务系统取消其有权访问的执行（仅 Client HMAC，按 client_id / allowed_tasks 隔离）
+      security:
+        - hmacSignature: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 500}
+                grace_seconds: {type: integer, minimum: 0, maximum: 3600, default: 30}
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          execution_status: {$ref: '#/components/schemas/ExecutionStatus'}
+                          cancel_state: {type: string, enum: [REQUESTED, SENT, ACKED, STOPPED, CANCEL_UNCONFIRMED]}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     hmacSignature:
@@ -1031,13 +1160,23 @@ components:
                   handler_major: {type: integer}
                   schema_hash: {type: string}
                   first_seen_at: {type: string, format: date-time}
+    SSETicketInfo:
+      type: object
+      required: [ticket, expires_at, url]
+      properties:
+        ticket: {type: string}
+        expires_at: {type: string, format: date-time}
+        url: {type: string, description: '浏览器可访问的 SSE 相对路径'}
     TriggerResult:
       type: object
       required: [execution_id, status]
       properties:
         execution_id: {type: string}
         status: {$ref: '#/components/schemas/ExecutionStatus'}
+        attempt_id: {type: string}
+        instance_id: {type: string}
         idempotent_replay: {type: boolean}
+        sse_ticket: {$ref: '#/components/schemas/SSETicketInfo'}
     ExecutionStatus: {type: string, enum: [PENDING, QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, SKIPPED]}
     AttemptStatus: {type: string, enum: [CREATED, DISPATCHING, ACKNOWLEDGED, RUNNING, SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, LOST]}
     Execution:

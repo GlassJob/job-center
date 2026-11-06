@@ -15,9 +15,11 @@ import (
 )
 
 type triggerBody struct {
-	Params    json.RawMessage `json:"params"`
-	Reason    string          `json:"reason"`
-	AllowWait bool            `json:"allow_wait"`
+	Params        json.RawMessage `json:"params"`
+	Reason        string          `json:"reason"`
+	AllowWait     bool            `json:"allow_wait"`
+	WithSSETicket bool            `json:"with_sse_ticket"`
+	CallbackURL   string          `json:"callback_url"`
 }
 
 type cancelBody struct {
@@ -131,20 +133,7 @@ func (s *Server) getExecution(w http.ResponseWriter, r *http.Request) {
 	if attempts == nil {
 		attempts = []*repo.Attempt{}
 	}
-	// openapi ExecutionDetail = Execution fields + attempts（扁平，非 {execution,attempts}）
-	out := map[string]any{
-		"execution_id": e.ExecutionID, "task_id": e.TaskID, "service_id": e.ServiceID, "task_code": e.TaskCode,
-		"trigger_type": e.TriggerType, "triggered_by": e.TriggeredBy, "params": e.Params,
-		"idempotency_key": e.IdempotencyKey, "status": e.Status, "status_reason": e.StatusReason,
-		"handler_version": e.HandlerVersion, "handler_major": e.HandlerMajor, "schema_hash": e.SchemaHash,
-		"timeout_seconds": e.TimeoutSeconds, "retry_policy": e.RetryPolicy, "max_attempts": e.MaxAttempts,
-		"attempt_count": e.AttemptCount, "current_attempt_id": e.CurrentAttemptID,
-		"started_at": e.StartedAt, "finished_at": e.FinishedAt, "result": e.Result,
-		"error_code": e.ErrorCode, "error_message": e.ErrorMessage,
-		"created_at": e.CreatedAt, "updated_at": e.UpdatedAt,
-		"attempts": attempts,
-	}
-	writeOK(w, r, http.StatusOK, out)
+	writeOK(w, r, http.StatusOK, formatExecutionDetail(e, attempts))
 }
 
 func (s *Server) postCancelExecution(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +216,16 @@ func (s *Server) postAPITrigger(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "params required", nil)
 		return
 	}
+	if strings.TrimSpace(body.CallbackURL) != "" {
+		allowedHosts := ac.CallbackAllowedHosts
+		if len(allowedHosts) == 0 && s.cfg != nil {
+			allowedHosts = s.cfg.Security.CallbackAllowedHosts
+		}
+		if err := appexec.ValidateCallbackURL(body.CallbackURL, allowedHosts); err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
+			return
+		}
+	}
 	sid, err := s.store.Q().GetServiceIDByCode(r.Context(), serviceCode)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
@@ -247,11 +246,14 @@ func (s *Server) postAPITrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	out, code, err := s.exec.APITrigger(r.Context(), appexec.TriggerInput{
 		TaskID: taskID, Params: body.Params, Reason: body.Reason, AllowWait: body.AllowWait,
-		IdempotencyKey: key, Client: clientID,
+		CallbackURL: body.CallbackURL, IdempotencyKey: key, Client: clientID,
 	})
 	if err != nil {
 		writeExecErr(w, r, code, err)
 		return
+	}
+	if body.WithSSETicket && s.tickets != nil {
+		out.SSETicket = s.issueClientTicketBrief(out.ExecutionID, clientID)
 	}
 	writeOK(w, r, code, out)
 }
