@@ -109,6 +109,7 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 	defer ping.Stop()
 	poll := time.NewTicker(500 * time.Millisecond)
 	defer poll.Stop()
+	progThrottle := sse.NewProgressThrottle(time.Second)
 
 	writeEvent := func(event string, idStr string, data any) bool {
 		b, _ := json.Marshal(data)
@@ -118,6 +119,26 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		flusher.Flush()
 		return true
+	}
+
+	emitProgress := func(prog *repo.ProgressSnap) {
+		if prog == nil || prog.UpdatedAt == nil {
+			return
+		}
+		key := prog.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		if prog.Percent != nil {
+			key += fmt.Sprintf(":%.6f", *prog.Percent)
+		}
+		if prog.Message != nil {
+			key += ":" + *prog.Message
+		}
+		if !progThrottle.Allow(time.Now(), prog.AttemptNumber, key) {
+			return
+		}
+		writeEvent("progress", fmt.Sprintf("%d:%d:%d", cur.EventID, prog.AttemptNumber, cur.Seq), map[string]any{
+			"attempt_id": prog.AttemptID, "attempt_number": prog.AttemptNumber,
+			"percent": prog.Percent, "message": prog.Message, "updated_at": prog.UpdatedAt.UTC(),
+		})
 	}
 
 	emitCatchUp := func() (terminal bool, err error) {
@@ -159,11 +180,8 @@ func (s *Server) streamExecutionEvents(w http.ResponseWriter, r *http.Request) {
 			writeEvent("log", idStr, l)
 			cur.AttemptNumber, cur.Seq = l.AttemptNumber, l.Seq
 		}
-		if prog, _ := s.store.Q().CurrentProgress(r.Context(), id); prog != nil && prog.UpdatedAt != nil {
-			writeEvent("progress", fmt.Sprintf("%d:%d:%d", cur.EventID, prog.AttemptNumber, cur.Seq), map[string]any{
-				"attempt_id": prog.AttemptID, "attempt_number": prog.AttemptNumber,
-				"percent": prog.Percent, "message": prog.Message, "updated_at": prog.UpdatedAt.UTC(),
-			})
+		if prog, _ := s.store.Q().CurrentProgress(r.Context(), id); prog != nil {
+			emitProgress(prog)
 		}
 		ex, err := s.store.Q().GetExecution(r.Context(), id)
 		if err != nil {

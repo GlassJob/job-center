@@ -147,11 +147,31 @@ func TestP7OverviewSSEDeployVersions(t *testing.T) {
 			t.Fatalf("%d %s", code, resp)
 		}
 		var env struct {
+			Code    string           `json:"code"`
+			Message string           `json:"message"`
+			Data    []map[string]any `json:"data"`
+		}
+		_ = json.Unmarshal([]byte(resp), &env)
+		if env.Code != "OK" || env.Message == "" {
+			t.Fatalf("versions must be Envelope: %s", resp)
+		}
+		if len(env.Data) != 1 || env.Data[0]["state"] != "NO_ONLINE_INSTANCE" {
+			t.Fatalf("%s", resp)
+		}
+	})
+
+	t.Run("deployments_list_envelope", func(t *testing.T) {
+		code, resp := signedJSON(t, http.MethodGet, base+"/v1/admin/deployments?service_id="+strconv.FormatInt(svc.ID, 10), nil, "", secret, []string{"job.service.view"}, false)
+		if code != 200 {
+			t.Fatalf("%d %s", code, resp)
+		}
+		var env struct {
+			Code string           `json:"code"`
 			Data []map[string]any `json:"data"`
 		}
 		_ = json.Unmarshal([]byte(resp), &env)
-		if len(env.Data) != 1 || env.Data[0]["state"] != "NO_ONLINE_INSTANCE" {
-			t.Fatalf("%s", resp)
+		if env.Code != "OK" || len(env.Data) < 1 {
+			t.Fatalf("deployments must be Envelope with list data: %s", resp)
 		}
 	})
 
