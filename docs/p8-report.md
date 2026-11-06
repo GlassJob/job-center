@@ -42,3 +42,19 @@
 - `/health/ready` 尚未检查「调度器近 10s 跑过」（protocol-http §7 完整定义；现为 MySQL Ping）
 - SDK 接入长文仍以 job-docs `sdk-go.md` / `sdk-php.md` 为准（本仓不重复）
 - 审计历史里曾写入 `Result=OK` 的路径已改为 `SUCCESS`（匹配表 CHECK）
+
+## F. 18.4 性能基准测试（`tests/integration/p8_bench_test.go`）
+
+命令：`go test -run='^$' -bench='^BenchmarkP8_' -benchmem -benchtime=250ms ./tests/integration/`（真实 MySQL 8.0 + 真实 WebSocket，Intel Xeon 8 vCPU）
+
+| 基准用例 | 覆盖 §18.4 指标 | 实测结果 | 内存分配 |
+|----------|----------------|----------|----------|
+| `BenchmarkP8_WSConcurrentConnect-8` | WebSocket 并发连接与鉴权 | `1.36 ms/op`（~735 conn/s） | `85.3 KB/op`, `819 allocs/op` |
+| `BenchmarkP8_DispatchAndStatusLifecycle-8` | 任务下发延迟 + 状态更新吞吐（Trigger→Ack→Started→Completed 全链路落库） | `11.51 ms/op`（~87 full-lifecycle/s） | `87.3 KB/op`, `1614 allocs/op` |
+| `BenchmarkP8_LogWriteThroughput-8` | 日志批量写入吞吐（20 条/批入月分区表） | `6.72 ms/op`（**`2977 lines/s`**） | `43.6 KB/op`, `682 allocs/op` |
+| `BenchmarkP8_ConcurrentClaimConsistency-8` | MySQL 锁竞争 + 高并发执行状态一致性（8 协程并发 `DispatchOnce` 抢同一 PENDING） | `6.54 ms/op`；全部迭代断言仅生成 **1** 个 Attempt | `179.8 KB/op`, `3408 allocs/op` |
+
+## G. 收尾对齐补充
+
+- `GET /v1/admin/executions/{id}/logs` 已收敛为 Envelope + `data.list`（去掉 `items`，commit `651371f`）。
+- 第 22 章文档已同步推入 `GlassJob/job-docs`（`b65e908`）：`deployment.md`、`operations.md`、`troubleshooting.md`，并通过 `_verify/verify_docs.sh` 校验。
