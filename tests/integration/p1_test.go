@@ -313,10 +313,11 @@ func TestP1ExecutorLifecycle(t *testing.T) {
 func cleanup(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
-		"DELETE FROM job_instance_task", "DELETE FROM job_execution_attempt", "DELETE FROM job_execution_event",
+		"DELETE FROM job_instance_task", "DELETE FROM job_execution_log", "DELETE FROM job_execution_attempt", "DELETE FROM job_execution_event",
 		"DELETE FROM job_execution", "DELETE FROM job_schedule", "DELETE FROM job_definition_version",
 		"DELETE FROM job_definition", "DELETE FROM job_instance", "DELETE FROM job_service_credential",
-		"DELETE FROM job_service WHERE service_code='demo.svc'", "DELETE FROM job_operation_audit",
+		"DELETE FROM job_deployment", "DELETE FROM job_archive_run",
+		"DELETE FROM job_service WHERE service_code IN ('demo.svc','p5.svc','p7.svc')", "DELETE FROM job_operation_audit",
 	} {
 		if _, err := db.Exec(q); err != nil {
 			// some tables may not exist yet in partial migrate — ignore

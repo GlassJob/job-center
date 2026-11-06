@@ -82,6 +82,12 @@ type Config struct {
 		LostGrace       Duration `yaml:"lost_grace"`
 		TimeoutGrace    Duration `yaml:"timeout_grace"`
 	} `yaml:"scheduler"`
+	Archive struct {
+		Dir              string   `yaml:"dir"`
+		DailyAt          string   `yaml:"daily_at"` // HH:MM local
+		LogRetentionDays int      `yaml:"log_retention_days"`
+		ExecRetentionDays int     `yaml:"execution_retention_days"`
+	} `yaml:"archive"`
 	Log struct {
 		Level  string `yaml:"level"`
 		Format string `yaml:"format"` // json|text
@@ -121,6 +127,10 @@ func Default() *Config {
 	c.Scheduler.LeaseTTL = Duration(15 * time.Second)
 	c.Scheduler.LostGrace = Duration(60 * time.Second)
 	c.Scheduler.TimeoutGrace = Duration(60 * time.Second)
+	c.Archive.Dir = "./data/archive"
+	c.Archive.DailyAt = "03:30"
+	c.Archive.LogRetentionDays = 365
+	c.Archive.ExecRetentionDays = 365
 	c.Log.Level = "info"
 	c.Log.Format = "json"
 	return c
@@ -163,6 +173,7 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) error {
 	str("JC_DEFAULT_TIMEZONE", &c.Scheduler.DefaultTimezone)
 	str("JC_LOG_LEVEL", &c.Log.Level)
 	str("JC_LOG_FORMAT", &c.Log.Format)
+	str("JC_ARCHIVE_DIR", &c.Archive.Dir)
 	if v, ok := lookup("JC_ADMIN_CLIENT_SECRETS"); ok && v != "" {
 		// 格式：client:secret[,client:secret]；环境变量登记的客户端权限上限为 ["*"]，
 		// 需要更细的上限时使用 YAML。

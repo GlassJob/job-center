@@ -131,7 +131,7 @@ func (s *Server) listExecutionLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	after, _ := strconv.ParseInt(q.Get("after_seq"), 10, 64)
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	items, next, err := s.store.Q().ListLogs(r.Context(), id, q.Get("attempt_id"), after, limit)
+	items, next, more, err := s.store.Q().ListLogsFiltered(r.Context(), id, q.Get("attempt_id"), q.Get("level"), after, limit)
 	if err != nil {
 		writeAPIError(w, r, http.StatusInternalServerError, "STORAGE_UNAVAILABLE", err.Error(), nil)
 		return
@@ -139,7 +139,8 @@ func (s *Server) listExecutionLogs(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []map[string]any{}
 	}
-	writeOK(w, r, http.StatusOK, map[string]any{"list": items, "next_after_seq": next, "has_more": len(items) > 0 && len(items) == limit})
+	// P2 对齐用 list；openapi 写 items——两者都返回，避免 Admin 轮询回归
+	writeOK(w, r, http.StatusOK, map[string]any{"list": items, "items": items, "next_after_seq": next, "has_more": more})
 }
 
 func writeExecErr(w http.ResponseWriter, r *http.Request, status int, err error) {

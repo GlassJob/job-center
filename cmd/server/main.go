@@ -11,11 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GlassJob/job-center/internal/application/archive"
 	"github.com/GlassJob/job-center/internal/application/catalog"
 	appexec "github.com/GlassJob/job-center/internal/application/execution"
-	"github.com/GlassJob/job-center/internal/application/scheduler"
 	"github.com/GlassJob/job-center/internal/application/monitoring"
 	"github.com/GlassJob/job-center/internal/application/registration"
+	"github.com/GlassJob/job-center/internal/application/scheduler"
 	"github.com/GlassJob/job-center/internal/config"
 	"github.com/GlassJob/job-center/internal/domain/schedule"
 	"github.com/GlassJob/job-center/internal/infrastructure/database"
@@ -79,8 +80,18 @@ func run() error {
 	}
 	go mon.Run(ctx)
 
+	watcher := monitoring.NewWatcher(store, monitoring.AlertOptions{}, log)
+	go watcher.Run(ctx)
+
+	arch := archive.New(store, archive.LocalSink{Dir: cfg.Archive.Dir}, archive.Options{
+		Dir: cfg.Archive.Dir, DailyAt: cfg.Archive.DailyAt, Location: loc, NodeID: cfg.NodeID,
+		Tables: archive.DefaultTables(cfg.Archive.LogRetentionDays, cfg.Archive.ExecRetentionDays),
+	}, log)
+	go arch.Run(ctx)
+
 	ws := wstransport.NewServer(reg, cfg, val, log)
 	api := httpapi.New(db, store, cat, cfg, loc, tzName)
+	api.SetWatcher(watcher)
 	leaseTTL := cfg.WebSocket.LeaseTTL.D()
 	if leaseTTL <= 0 {
 		leaseTTL = 60 * time.Second

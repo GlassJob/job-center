@@ -115,3 +115,60 @@ func (s *Server) maxBody() int64 {
 	}
 	return 1 << 20
 }
+
+// ClientAuth 仅校验 HMAC（无 X-JC-Operator），用于 POST /v1/deployments 等发布脚本入口。
+func (s *Server) ClientAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			clientID := r.Header.Get(security.HeaderClient)
+			ts := r.Header.Get(security.HeaderTimestamp)
+			nonce := r.Header.Get(security.HeaderNonce)
+			sig := r.Header.Get(security.HeaderSignature)
+			opHdr := r.Header.Get(security.HeaderOperator) // 可空
+			if clientID == "" || ts == "" || nonce == "" || sig == "" {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "missing signature headers", nil)
+				return
+			}
+			ac, ok := s.cfg.Security.AdminClients[clientID]
+			if !ok || ac.Secret == "" {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "unknown client", nil)
+				return
+			}
+			sec, err := strconv.ParseInt(ts, 10, 64)
+			if err != nil {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "bad timestamp", nil)
+				return
+			}
+			skew := s.cfg.Security.TimestampSkew.D()
+			if skew <= 0 {
+				skew = 5 * time.Minute
+			}
+			now := time.Now().Unix()
+			diff := now - sec
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > int64(skew/time.Second) {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "timestamp skew", nil)
+				return
+			}
+			if !s.nonces.Use(clientID, nonce) {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "nonce replay", nil)
+				return
+			}
+			body, err := io.ReadAll(io.LimitReader(r.Body, s.maxBody()))
+			if err != nil {
+				writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "read body failed", nil)
+				return
+			}
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			canon, err := security.Canonical(r.Method, r.URL.Path, r.URL.RawQuery, body, ts, nonce, opHdr)
+			if err != nil || !security.VerifySignature(ac.Secret, canon, sig) {
+				writeAPIError(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "bad signature", nil)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

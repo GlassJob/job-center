@@ -170,7 +170,12 @@ func applySchedulePatch(s *repo.Schedule, patch map[string]any) {
 		if raw == nil {
 			s.Timezone = nil
 		} else if str, ok := raw.(string); ok {
-			s.Timezone = &str
+			// openapi: 空串等同 NULL（服务器本地时区），不落库空字符串
+			if str == "" {
+				s.Timezone = nil
+			} else {
+				s.Timezone = &str
+			}
 		}
 	}
 	if v, ok := patch["manual_enabled"].(bool); ok {
@@ -256,4 +261,64 @@ func (s *Server) fillEffectiveTZ(sch *repo.Schedule) {
 		return
 	}
 	sch.EffectiveTimezone = "Local"
+}
+
+
+func (s *Server) postCronPreview(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		CronExpression string  `json:"cron_expression"`
+		Timezone       *string `json:"timezone"`
+		Count          int     `json:"count"`
+	}
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", err.Error(), nil)
+		return
+	}
+	if body.CronExpression == "" {
+		writeAPIError(w, r, http.StatusBadRequest, "PARAMS_INVALID", "cron_expression required", nil)
+		return
+	}
+	if body.Count < 1 {
+		body.Count = 5
+	}
+	if body.Count > 20 {
+		body.Count = 20
+	}
+	// 空串 = null = 服务器本地时区
+	var tz *string
+	if body.Timezone != nil && *body.Timezone != "" {
+		tz = body.Timezone
+	}
+	if err := schedule.ValidateTimezone(tz); err != nil {
+		writeOK(w, r, http.StatusOK, map[string]any{"valid": false, "error": err.Error(), "next_fire_times": []string{}})
+		return
+	}
+	cs, err := task.ValidateCron(body.CronExpression)
+	if err != nil {
+		writeOK(w, r, http.StatusOK, map[string]any{"valid": false, "error": err.Error(), "next_fire_times": []string{}})
+		return
+	}
+	loc := s.defaultLoc
+	if loc == nil {
+		loc = time.Local
+	}
+	if tz != nil {
+		l, err := time.LoadLocation(*tz)
+		if err != nil {
+			writeOK(w, r, http.StatusOK, map[string]any{"valid": false, "error": err.Error(), "next_fire_times": []string{}})
+			return
+		}
+		loc = l
+	}
+	cur := time.Now().In(loc)
+	out := make([]string, 0, body.Count)
+	for i := 0; i < body.Count; i++ {
+		n := cs.Next(cur)
+		if n.IsZero() {
+			break
+		}
+		out = append(out, n.UTC().Format(time.RFC3339Nano))
+		cur = n
+	}
+	writeOK(w, r, http.StatusOK, map[string]any{"valid": true, "next_fire_times": out})
 }

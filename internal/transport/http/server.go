@@ -10,6 +10,7 @@ import (
 
 	"github.com/GlassJob/job-center/internal/application/catalog"
 	appexec "github.com/GlassJob/job-center/internal/application/execution"
+	"github.com/GlassJob/job-center/internal/application/monitoring"
 	"github.com/GlassJob/job-center/internal/config"
 	"github.com/GlassJob/job-center/internal/infrastructure/security"
 	repo "github.com/GlassJob/job-center/internal/repository/mysql"
@@ -22,6 +23,8 @@ type Server struct {
 	exec       *appexec.Service
 	cfg        *config.Config
 	nonces     *security.NonceCache
+	tickets    *security.TicketIssuer
+	watcher    *monitoring.Watcher
 	defaultLoc *time.Location
 	defaultTZ  string
 }
@@ -31,14 +34,20 @@ func New(db *sql.DB, store *repo.Store, cat *catalog.Service, cfg *config.Config
 	if cfg != nil && cfg.Security.NonceTTL.D() > 0 {
 		ttl = cfg.Security.NonceTTL.D()
 	}
+	pepper := ""
+	if cfg != nil {
+		pepper = cfg.Security.CredentialPepper
+	}
 	return &Server{
 		db: db, store: store, catalog: cat, cfg: cfg,
-		nonces: security.NewNonceCache(ttl),
+		nonces:     security.NewNonceCache(ttl),
+		tickets:    security.NewTicketIssuer(pepper, 60*time.Second),
 		defaultLoc: defaultLoc, defaultTZ: defaultTZ,
 	}
 }
 
 func (s *Server) SetExecution(exec *appexec.Service) { s.exec = exec }
+func (s *Server) SetWatcher(w *monitoring.Watcher)   { s.watcher = w }
 
 func (s *Server) MountExecutor(mux *http.ServeMux) {
 	mux.HandleFunc("/health/live", s.live)
@@ -50,11 +59,16 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("/health/ready", s.ready)
 
 	// 读接口：HMAC + X-JC-Operator 权限强制
+	mux.Handle("GET /v1/admin/overview", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminOverview)))
 	mux.Handle("GET /v1/admin/services", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListServices)))
 	mux.Handle("GET /v1/admin/services/{service_id}", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminGetService)))
 	mux.Handle("GET /v1/admin/instances", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListInstances)))
 	mux.Handle("GET /v1/admin/tasks", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminListTasks)))
 	mux.Handle("GET /v1/admin/tasks/{task_id}", s.AdminAuth("job.task.view")(http.HandlerFunc(s.adminGetTask)))
+	mux.Handle("GET /v1/admin/versions", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListVersions)))
+	mux.Handle("GET /v1/admin/deployments", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListDeployments)))
+	mux.Handle("GET /v1/admin/alerts", s.AdminAuth("job.service.view")(http.HandlerFunc(s.adminListAlerts)))
+	mux.Handle("POST /v1/admin/cron/preview", s.AdminAuth("job.task.view")(http.HandlerFunc(s.postCronPreview)))
 
 	// 写接口
 	mux.Handle("POST /v1/admin/services", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminCreateService)))
@@ -62,6 +76,7 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/services/{service_id}/credentials", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminListCredentials)))
 	mux.Handle("POST /v1/admin/services/{service_id}/credentials", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminCreateCredential)))
 	mux.Handle("POST /v1/admin/credentials/{key_id}/revoke", s.AdminAuth("job.credential.manage")(http.HandlerFunc(s.adminRevokeCredential)))
+	mux.Handle("POST /v1/admin/services/{service_id}/deployments", s.AdminAuth("job.deployment.manage")(http.HandlerFunc(s.postAdminDeployment)))
 
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/enabled", s.AdminAuth("job.task.update")(http.HandlerFunc(s.putTaskEnabled)))
 	mux.Handle("PUT /v1/admin/tasks/{task_id}/schedule", s.AdminAuth("job.schedule.update")(http.HandlerFunc(s.putTaskSchedule)))
@@ -70,6 +85,11 @@ func (s *Server) MountAdmin(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/executions/{execution_id}", s.AdminAuth("job.execution.view")(http.HandlerFunc(s.getExecution)))
 	mux.Handle("POST /v1/admin/executions/{execution_id}/cancel", s.AdminAuth("job.task.cancel")(http.HandlerFunc(s.postCancelExecution)))
 	mux.Handle("GET /v1/admin/executions/{execution_id}/logs", s.AdminAuth("job.execution.log.view")(http.HandlerFunc(s.listExecutionLogs)))
+	mux.Handle("POST /v1/admin/sse-tickets", s.AdminAuth("job.execution.log.view")(http.HandlerFunc(s.postSSETicket)))
+	mux.Handle("GET /v1/admin/executions/{execution_id}/events", s.sseOrHMAC("job.execution.log.view", s.streamExecutionEvents))
+
+	// 发布脚本 HMAC（无 Operator）
+	mux.Handle("POST /v1/deployments", s.ClientAuth()(http.HandlerFunc(s.postPublicDeployment)))
 }
 
 func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
@@ -85,10 +105,6 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
-
-
-
-
 
 func pageLimit(r *http.Request) (int, int) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
