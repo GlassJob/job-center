@@ -10,7 +10,7 @@
 - 分层：`handler` → `service` → `repository`，模型在 `model`
 - 复用已有 `migrations/0001_init.sql`、`migrations/0002_runtime_execution.sql`
 - 模块路径：`github.com/GlassJob/job-center`
-- Admin API（Phase A）+ Executor **WS Gateway 协议 1.1** 已落地；scheduler/execution 仍后置
+- Admin API（Phase A）+ Executor **WS Gateway 协议 1.1** + Task/Cancel MVP + Go SDK（`job-executor-go/`）已落地；scheduler 仍后置
 
 ## 目录结构
 
@@ -137,12 +137,17 @@ flowchart LR
 5. **Executor WS Gateway 1.1**（HMAC + IP 白名单 + 注册/心跳/注销 + 调度策略 C）
 6. 接口文档：`docs/api.md`、`docs/protocol-websocket-v1.1.md`
 
+已补充：
+
+- Task 执行 MVP（Admin 手动触发 + `task.execute`/`completed` 闭环）
+- Admin Cancel + `task.cancel*` + attempt.`cancel_state`
+- Go SDK：`../job-executor-go`（HMAC 1.1 + execute/cancel）
+
 下阶段：
 
-- `schedule_triggers`（0003）+ scheduler 扫描
-- `task.*` 执行帧与 execution 状态机
+- `schedule_triggers`（0003）+ scheduler 扫描 / QUEUED 扫队
+- logs 落库 / checkpoint→job_states / 租约 LOST / `CANCEL_UNCONFIRMED` 回收
 - 可选 mTLS / 短期 session token / 节点级授权
-- 删除临时 HTTP `/v1/executor/{register,heartbeat,unregister}`
 - Prometheus、OpenAPI、Makefile/Dockerfile 完善
 
 ## 不做（当前阶段）

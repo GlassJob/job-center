@@ -7,7 +7,8 @@
 | Health | `GET /health/live` · `GET /health/ready` | 可用 |
 | Admin HTTP | `/v1/admin/*` | Phase A 可用 |
 | Executor **WS 1.1** | `GET /v1/executor/ws` | **主路径**，见 [protocol-websocket-v1.1.md](./protocol-websocket-v1.1.md) |
-| Executor HTTP | `POST /v1/executor/{register,heartbeat,unregister}` | 临时联调，与 WS 共用 service；后续删除 |
+| Admin executions | `POST|GET .../executions` · `POST .../cancel` | 手动触发 / 查询 / 取消 |
+| Go SDK | 仓库根目录 `job-executor-go/` | 协议 1.1 + cancel |
 
 冒烟：`scripts/ws_smoke.py`。
 
@@ -46,8 +47,8 @@
 ```
 
 - `allowed_job_codes`：`null`=本服务全部 Job；数组可含前缀通配
-- `allowed_ips`：`null`/省略=不限制；否则 IP 或 CIDR，用于 **WS HMAC 鉴权** 与 HTTP 凭据校验
-- 响应 `data` 含一次性 `secret`、`token`（`jcs_<id>.<secret>`，仅 HTTP 联调）；视图字段含 `allowed_ips`，**不含** `secret_hash` / `secret_enc`
+- `allowed_ips`：`null`/省略=不限制；否则 IP 或 CIDR，用于 **WS HMAC 鉴权**
+- 响应 `data` 含一次性 `secret`（WS 签名用）及兼容字段 `token`；视图字段含 `allowed_ips`，**不含** `secret_hash` / `secret_enc`
 
 ### Patch body
 
@@ -85,25 +86,35 @@ Rotate 会重新生成 `secret`/`secret_enc`/`secret_hash`；旧行无 `secret_e
 
 ---
 
-## Executor HTTP（临时联调）
+## Admin：手动执行
 
-鉴权：`X-JC-Credential: jcs_<credential_id>.<secret>`（或 `Authorization: Bearer …`）。
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| POST | `/v1/admin/services/:serviceId/jobs/:jobId/executions` | `job.job.manage` |
+| GET | `/v1/admin/services/:serviceId/jobs/:jobId/executions/:executionId` | `job.job.view` |
+| POST | `/v1/admin/services/:serviceId/jobs/:jobId/executions/:executionId/cancel` | `job.job.manage` |
 
-### `POST /v1/executor/register`
-
-Body 与 WS `service.register` data 相同（见协议文档字段表）。响应 `data` 为 `RegisterResponse`（含 `accepted_jobs` / `rejected_jobs` / `warnings`）。
-
-### `POST /v1/executor/heartbeat`
-
-头：`X-JC-Instance-Id` / `X-JC-Session-Id` / `X-JC-Session-Epoch` + Credential。
+Create body：
 
 ```json
-{ "status": "ONLINE", "running": 0, "max_concurrency": 2 }
+{
+  "params": { "name": "x" },
+  "idempotency_key": "optional-unique-key",
+  "instance_id": "optional-prefer-instance"
+}
 ```
 
-### `POST /v1/executor/unregister`
+响应：`execution_id` / `status`（`DISPATCHING` 或 `QUEUED`）/ `attempt_id` / `instance_id`。  
+有 ONLINE 且已 register 该 job、有容量的实例时同步下发 `task.execute`；否则 `QUEUED`（本轮无后台扫队）。
 
-同上会话头；Body 可选 `{ "reason": "..." }`；实例进入 `DRAINING`。
+Cancel body 可选：`{ "reason": "..." }`。
+
+| 状态 | 取消行为 |
+|------|----------|
+| `QUEUED` / `PENDING` | 直接 `CANCELLED` |
+| `DISPATCHING` / `RUNNING` | `cancel_state` → `REQUESTED`/`SENT`，下发 `task.cancel`；收到 `cancelled` 后终态 |
+| 已终态 | HTTP 409 |
+| 重复取消 | 幂等 OK |
 
 ---
 

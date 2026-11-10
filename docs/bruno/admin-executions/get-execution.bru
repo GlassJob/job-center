@@ -1,0 +1,11 @@
+meta {
+  name: Get execution
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/executions/{{execution_id}}
+  body: none
+  auth: none
+}

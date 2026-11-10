@@ -13,17 +13,21 @@ import (
 
 // Server Executor WebSocket Gateway（协议 1.1）。
 type Server struct {
-	hub  *Hub
-	exec *service.Executor
-	cfg  config.WebSocketConfig
-	log  *slog.Logger
+	hub        *Hub
+	exec       *service.Executor
+	executions *service.Executions
+	cfg        config.WebSocketConfig
+	log        *slog.Logger
 }
 
-func NewServer(exec *service.Executor, cfg config.WebSocketConfig, log *slog.Logger) *Server {
+func NewServer(hub *Hub, exec *service.Executor, executions *service.Executions, cfg config.WebSocketConfig, log *slog.Logger) *Server {
+	if hub == nil {
+		hub = NewHub()
+	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{hub: NewHub(), exec: exec, cfg: cfg, log: log}
+	return &Server{hub: hub, exec: exec, executions: executions, cfg: cfg, log: log}
 }
 
 func (s *Server) Hub() *Hub { return s.hub }
@@ -58,6 +62,6 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request, peerIP string) {
 	if peerIP == "" {
 		peerIP = remoteIP(r.RemoteAddr)
 	}
-	c := newConn(ws, peerIP, s.hub, s.exec, s.cfg, s.log)
+	c := newConn(ws, peerIP, s.hub, s.exec, s.executions, s.cfg, s.log)
 	c.Run(r.Context())
 }

@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""WS Gateway 1.1 smoke: HMAC auth → register → heartbeat → close.
+"""WS Gateway 1.1 smoke: auth → register → Admin trigger → task.execute 回包 → close.
 
 用法（需服务已启动）:
-  py -3 scripts/ws_smoke.py
-  # 或指定已有凭据：
-  set JC_WS_CODE=demo
-  set JC_WS_CREDENTIAL_ID=...
-  set JC_WS_SECRET=...
+  set JC_CLIENT_ID=<bootstrap client id>
   py -3 scripts/ws_smoke.py
 
 依赖: pip install websocket-client
@@ -19,6 +15,7 @@ import json
 import os
 import secrets
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -73,7 +70,7 @@ def admin_sign(method: str, path: str, body: bytes) -> dict[str, str]:
 
 
 def admin_json(method: str, path: str, payload: dict | None = None) -> dict:
-    body = b"" if payload is None else json.dumps(payload).encode()
+    body = b"" if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     req = urllib.request.Request(
         BASE + path,
         data=body if method.upper() != "GET" else None,
@@ -89,12 +86,14 @@ def admin_json(method: str, path: str, payload: dict | None = None) -> dict:
         raise SystemExit(f"admin {method} {path} -> {e.code}: {err}") from e
 
 
-def ensure_credential() -> tuple[str, str, str]:
+def ensure_credential() -> tuple[str, str, str, str]:
+    """returns code, credential_id, secret, service_id"""
     code = os.environ.get("JC_WS_CODE", "").strip()
     cred_id = os.environ.get("JC_WS_CREDENTIAL_ID", "").strip()
     secret = os.environ.get("JC_WS_SECRET", "").strip()
-    if code and cred_id and secret:
-        return code, cred_id, secret
+    service_id = os.environ.get("JC_WS_SERVICE_ID", "").strip()
+    if code and cred_id and secret and service_id:
+        return code, cred_id, secret, service_id
 
     code = code or f"ws.smoke.{secrets.token_hex(3)}"
     created = admin_json(
@@ -110,7 +109,7 @@ def ensure_credential() -> tuple[str, str, str]:
         {"name": "smoke-cred"},
     )
     cdata = cred.get("data") or cred
-    return code, cdata["id"], cdata["secret"]
+    return code, cdata["id"], cdata["secret"], sid
 
 
 def envelope(typ: str, data: dict, request_id: str | None = None) -> dict:
@@ -140,16 +139,60 @@ def recv_typed(ws: websocket.WebSocket, expect: str, timeout: float = 10.0) -> d
     return env
 
 
+def handle_task_execute(ws: websocket.WebSocket, env: dict) -> None:
+    data = env.get("data") or {}
+    attempt_id = data["attempt_id"]
+    lease = data["lease_token"]
+    print(f"got task.execute attempt={attempt_id} job={data.get('job_code')}")
+    ws.send(
+        json.dumps(
+            envelope(
+                "task.execute_ack",
+                {"attempt_id": attempt_id, "lease_token": lease, "accepted": True},
+                env.get("message_id"),
+            )
+        )
+    )
+    _ = recv_typed(ws, "task.result_ack", timeout=5)
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    ws.send(
+        json.dumps(
+            envelope(
+                "task.started",
+                {"attempt_id": attempt_id, "lease_token": lease, "started_at": started_at},
+            )
+        )
+    )
+    _ = recv_typed(ws, "task.result_ack", timeout=5)
+    finished = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    ws.send(
+        json.dumps(
+            envelope(
+                "task.completed",
+                {
+                    "attempt_id": attempt_id,
+                    "lease_token": lease,
+                    "finished_at": finished,
+                    "result": {"ok": True, "from": "ws_smoke"},
+                },
+            )
+        )
+    )
+    ack = recv_typed(ws, "task.result_ack", timeout=5)
+    print(f"task completed ack={ack.get('data')}")
+
+
 def main() -> None:
-    code, cred_id, secret = ensure_credential()
+    code, cred_id, secret, service_id = ensure_credential()
     instance_key = os.environ.get("JC_WS_INSTANCE_KEY", f"smoke-{uuid.uuid4().hex[:8]}")
-    print(f"code={code} credential_id={cred_id} instance_key={instance_key}")
+    print(f"code={code} credential_id={cred_id} service_id={service_id} instance_key={instance_key}")
 
     ws = websocket.create_connection(
         WS_URL,
         subprotocols=["jobcenter.v1"],
         timeout=15,
     )
+    job_id = ""
     try:
         ts = str(int(time.time()))
         nonce = secrets.token_hex(8)
@@ -202,17 +245,72 @@ def main() -> None:
         reg_data = reg_env["data"]
         if not reg_data.get("ok"):
             raise SystemExit(f"register failed: {reg_data}")
-        print(f"register ok accepted={reg_data.get('accepted_jobs')} warnings={reg_data.get('warnings')}")
+        accepted = reg_data.get("accepted_jobs") or []
+        if not accepted:
+            raise SystemExit(f"no accepted jobs: {reg_data}")
+        job_id = accepted[0]["job_id"]
+        print(f"register ok job_id={job_id}")
 
         hb = envelope("service.heartbeat", {"status": "ONLINE", "running": 0})
         ws.send(json.dumps(hb))
         hb_env = recv_typed(ws, "service.heartbeat_ack")
         print(f"heartbeat ok status={hb_env['data'].get('instance_status')}")
 
+        ready = threading.Event()
+        err_box: list[BaseException] = []
+
+        def listen() -> None:
+            try:
+                ready.set()
+                ws.settimeout(20)
+                while True:
+                    raw = ws.recv()
+                    env = json.loads(raw)
+                    typ = env.get("type")
+                    if typ == "task.execute":
+                        handle_task_execute(ws, env)
+                        return
+                    if typ in ("system.error", "system.notice"):
+                        print("notice/error", env)
+                        continue
+                    print("ignore frame", typ)
+            except BaseException as e:
+                err_box.append(e)
+
+        t = threading.Thread(target=listen, daemon=True)
+        t.start()
+        if not ready.wait(2):
+            raise SystemExit("listener not ready")
+        time.sleep(0.3)
+
+        trigger = admin_json(
+            "POST",
+            f"/v1/admin/services/{service_id}/jobs/{job_id}/executions",
+            {"params": {"from": "smoke"}, "idempotency_key": f"smoke-{secrets.token_hex(4)}"},
+        )
+        tdata = trigger.get("data") or trigger
+        print(f"trigger status={tdata.get('status')} execution_id={tdata.get('execution_id')}")
+        if tdata.get("status") == "QUEUED":
+            raise SystemExit("execution queued — instance not picked; check ONLINE registration")
+
+        t.join(timeout=25)
+        if err_box:
+            raise SystemExit(f"listener failed: {err_box[0]}")
+        if t.is_alive():
+            raise SystemExit("timeout waiting for task.execute")
+
+        detail = admin_json(
+            "GET",
+            f"/v1/admin/services/{service_id}/jobs/{job_id}/executions/{tdata['execution_id']}",
+        )
+        d = detail.get("data") or detail
+        print(f"final execution status={d.get('status')} result={d.get('result')}")
+        if d.get("status") != "SUCCEEDED":
+            raise SystemExit(f"expected SUCCEEDED, got {d.get('status')}")
+
         un = envelope("service.unregister", {"reason": "smoke done"})
         ws.send(json.dumps(un))
         time.sleep(0.2)
-        print("unregister sent; closing")
     finally:
         ws.close()
     print("OK")

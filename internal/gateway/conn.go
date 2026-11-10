@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +17,14 @@ import (
 )
 
 type Conn struct {
-	id     string
-	ws     *websocket.Conn
-	peerIP string
-	hub    *Hub
-	exec   *service.Executor
-	cfg    config.WebSocketConfig
-	log    *slog.Logger
+	id         string
+	ws         *websocket.Conn
+	peerIP     string
+	hub        *Hub
+	exec       *service.Executor
+	executions *service.Executions
+	cfg        config.WebSocketConfig
+	log        *slog.Logger
 
 	mu       sync.Mutex
 	sess     *service.Session
@@ -35,17 +35,18 @@ type Conn struct {
 	sendCh chan []byte
 }
 
-func newConn(ws *websocket.Conn, peerIP string, hub *Hub, exec *service.Executor, cfg config.WebSocketConfig, log *slog.Logger) *Conn {
+func newConn(ws *websocket.Conn, peerIP string, hub *Hub, exec *service.Executor, executions *service.Executions, cfg config.WebSocketConfig, log *slog.Logger) *Conn {
 	id := idgen.New()
 	return &Conn{
-		id:     id,
-		ws:     ws,
-		peerIP: peerIP,
-		hub:    hub,
-		exec:   exec,
-		cfg:    cfg,
-		log:    log.With("connection_id", id),
-		sendCh: make(chan []byte, cfg.SendQueueSize),
+		id:         id,
+		ws:         ws,
+		peerIP:     peerIP,
+		hub:        hub,
+		exec:       exec,
+		executions: executions,
+		cfg:        cfg,
+		log:        log.With("connection_id", id),
+		sendCh:     make(chan []byte, cfg.SendQueueSize),
 	}
 }
 
@@ -108,10 +109,6 @@ func (c *Conn) handle(ctx context.Context, raw []byte) error {
 		return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid envelope", false, "")
 	}
 	if !protocol.KnownTypes[env.Type] {
-		// 任务类等后置消息：已知外的类型也回 NOT_IMPLEMENTED
-		if strings.HasPrefix(env.Type, "task.") {
-			return c.sendError(protocol.ErrNotImplemented, "task messages not implemented", false, env.MessageID)
-		}
 		return c.sendError(protocol.ErrProtocolUnknownType, "unknown type "+env.Type, false, env.MessageID)
 	}
 	if !protocol.ExecutorToCenter[env.Type] {
@@ -134,6 +131,10 @@ func (c *Conn) handle(ctx context.Context, raw []byte) error {
 		return c.onHeartbeat(ctx, env)
 	case protocol.TypeServiceUnregister:
 		return c.onUnregister(ctx, env)
+	case protocol.TypeTaskExecuteAck, protocol.TypeTaskStarted, protocol.TypeTaskProgress,
+		protocol.TypeTaskLog, protocol.TypeTaskCheckpoint, protocol.TypeTaskCompleted, protocol.TypeTaskFailed,
+		protocol.TypeTaskCancelAck, protocol.TypeTaskCancelled:
+		return c.onTask(ctx, env)
 	default:
 		return c.sendError(protocol.ErrNotImplemented, "unsupported message type", false, env.MessageID)
 	}
@@ -245,6 +246,77 @@ func (c *Conn) onUnregister(ctx context.Context, env *protocol.Envelope) error {
 	c.mu.Lock()
 	c.normal = true
 	c.mu.Unlock()
+	return nil
+}
+
+func (c *Conn) onTask(ctx context.Context, env *protocol.Envelope) error {
+	sess := c.session()
+	if sess == nil || !sess.Registered {
+		return c.sendError(protocol.ErrInstanceNotRegistered, "register first", false, env.MessageID)
+	}
+	if c.executions == nil {
+		return c.sendError(protocol.ErrNotImplemented, "execution service not wired", false, env.MessageID)
+	}
+	var ack *protocol.TaskResultAck
+	switch env.Type {
+	case protocol.TypeTaskExecuteAck:
+		var m protocol.TaskExecuteAck
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid execute_ack", false, env.MessageID)
+		}
+		ack = c.executions.OnExecuteAck(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskStarted:
+		var m protocol.TaskStarted
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid started", false, env.MessageID)
+		}
+		ack = c.executions.OnStarted(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskProgress:
+		var m protocol.TaskProgress
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid progress", false, env.MessageID)
+		}
+		ack = c.executions.OnProgress(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskLog:
+		var m protocol.TaskLog
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid log", false, env.MessageID)
+		}
+		ack = c.executions.OnLogOrCheckpoint(ctx, sess.InstanceID, m.AttemptID, m.LeaseToken)
+	case protocol.TypeTaskCheckpoint:
+		var m protocol.TaskCheckpoint
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid checkpoint", false, env.MessageID)
+		}
+		ack = c.executions.OnLogOrCheckpoint(ctx, sess.InstanceID, m.AttemptID, m.LeaseToken)
+	case protocol.TypeTaskCompleted:
+		var m protocol.TaskCompleted
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid completed", false, env.MessageID)
+		}
+		ack = c.executions.OnCompleted(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskFailed:
+		var m protocol.TaskFailed
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid failed", false, env.MessageID)
+		}
+		ack = c.executions.OnFailed(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskCancelAck:
+		var m protocol.TaskCancelAck
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid cancel_ack", false, env.MessageID)
+		}
+		ack = c.executions.OnCancelAck(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskCancelled:
+		var m protocol.TaskCancelled
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid cancelled", false, env.MessageID)
+		}
+		ack = c.executions.OnCancelled(ctx, sess.InstanceID, m)
+	}
+	if ack != nil {
+		return c.reply(protocol.TypeTaskResultAck, env.MessageID, ack)
+	}
 	return nil
 }
 

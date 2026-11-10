@@ -1,0 +1,26 @@
+meta {
+  name: Cancel execution
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/executions/{{execution_id}}/cancel
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "reason": "bruno-cancel"
+  }
+}
+
+docs {
+  # POST .../executions/:executionId/cancel
+  
+  - QUEUED/PENDING：直接 CANCELLED
+  - DISPATCHING/RUNNING：下发 `task.cancel`，等待 `cancelled`
+  - 已终态：409
+  - 重复取消：幂等 OK
+}

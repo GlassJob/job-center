@@ -1,6 +1,6 @@
 # Executor WebSocket 协议 1.1
 
-总览与 Admin/HTTP 联调见 [api.md](./api.md)。
+总览与 Admin 接口见 [api.md](./api.md)。
 
 ## 连接
 
@@ -30,9 +30,15 @@
 | `service.register` / `service.register_ack` | E→C / C→E | 注册 jobs + 调度 C |
 | `service.heartbeat` / `service.heartbeat_ack` | E→C / C→E | 心跳（须已 register） |
 | `service.unregister` | E→C | 进入 DRAINING；随后可关连接 |
+| `task.execute` | C→E | 派发执行（字段 `job_code`） |
+| `task.execute_ack` / `task.started` / `task.progress` / `task.completed` / `task.failed` | E→C | 执行回传 |
+| `task.cancel` | C→E | Admin 取消下发 |
+| `task.cancel_ack` / `task.cancelled` | E→C | 取消确认 / 已停止 |
+| `task.result_ack` | C→E | 中心确认（`OK` / `REJECTED`） |
+| `task.log` / `task.checkpoint` | E→C | MVP：校验 lease 后 `result_ack OK`，不落库 |
 | `system.error` / `system.notice` | C→E | 错误 / 顶号通知 |
 
-任务执行帧（`task.*`）本轮返回 `system.error`：`NOT_IMPLEMENTED`。
+未实现：日志持久化、checkpoint 写 state、`CANCEL_UNCONFIRMED` 超时回收。
 
 应用层关闭码：`4001` 鉴权失败、`4002` 鉴权超时、`4003` 会话被顶、`4004` 协议不支持、`4005` 服务禁用。
 
@@ -97,7 +103,7 @@ AUTH
 
 ### `service.register` data
 
-与 HTTP `POST /v1/executor/register` body 相同。
+`service.register` data 字段如下。
 
 | 字段 | 说明 |
 |------|------|
@@ -178,6 +184,32 @@ AUTH
 
 ---
 
+## Task 执行（MVP）
+
+中心下发 `task.execute`（关键字段）：
+
+| 字段 | 说明 |
+|------|------|
+| `execution_id` / `attempt_id` / `attempt_number` | |
+| `lease_token` / `lease_expires_at` | 回传必须带上 |
+| `job_code` / `job_name` | 1.1 用 job_code |
+| `params` / `state` / `state_version` | state MVP 恒为 `{}` |
+| `timeout_seconds` / `deadline_at` / `trigger_type` / `handler_version` | |
+
+Executor 顺序建议：`execute_ack(accepted)` → `started` → `completed`|`failed`；每帧后收 `task.result_ack`。  
+错误 lease / 错 instance → `REJECTED`，库状态不变。
+
+Admin 触发：`POST /v1/admin/services/:serviceId/jobs/:jobId/executions`（见 [api.md](./api.md)）。
+
+### 取消
+
+Admin：`POST .../executions/:executionId/cancel` → 中心下发 `task.cancel`（`attempt_id` / `lease_token` / `reason`）。
+
+Executor：`task.cancel_ack`（`state=CANCELLING|NOT_FOUND`）→ 协作停止后 `task.cancelled`。  
+attempt.`cancel_state`：`NONE → REQUESTED → SENT → ACKED → STOPPED`。
+
+---
+
 ## 配置
 
 ```yaml
@@ -192,4 +224,4 @@ websocket:
   lease_ttl: 30s
 ```
 
-联调脚本：`scripts/ws_smoke.py`。
+联调：`scripts/ws_smoke.py`；Go SDK：`../job-executor-go`。

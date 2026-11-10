@@ -1,0 +1,30 @@
+meta {
+  name: Trigger execution
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/executions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "params": { "name": "bruno" },
+    "idempotency_key": "bruno-{{$timestamp}}"
+  }
+}
+
+docs {
+  # POST .../executions
+  
+  可选 `instance_id` 指定实例。无在线实例时 status=QUEUED。
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.execution_id) {
+    bru.setEnvVar('execution_id', res.body.data.execution_id);
+  }
+}

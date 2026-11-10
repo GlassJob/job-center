@@ -6,10 +6,8 @@ meta {
 docs {
   # Executor
   
-  1. **WS Gateway（主路径，Bruno type: ws）**：打开 `WS Gateway (协议 1.1)` → Connect → 按序 Send 消息
-  2. HTTP `register` / `heartbeat` / `unregister`：临时联调，鉴权 `X-JC-Credential`
-  
-  WS 联调前：Create credential → 环境变量 `executor_secret` / `credential_id` / `service_code`（预请求自动算 HMAC）。
+  仅 WebSocket：`WS Gateway (协议 1.1)` → `{{ws_url}}`。
   
   协议：`docs/protocol-websocket-v1.1.md`；总览：`docs/api.md`。
+  冒烟：`scripts/ws_smoke.py`。
 }

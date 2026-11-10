@@ -58,36 +58,6 @@ type Session struct {
 	Registered      bool
 }
 
-func (s *Executor) AuthenticateCredential(ctx context.Context, token, serviceCode, peerIP string) (*mysql.CredentialAuthRow, error) {
-	credID, secret, err := auth.ParseCredentialToken(token)
-	if err != nil {
-		return nil, fmt.Errorf("%w: malformed credential", ErrUnauthorized)
-	}
-	row, err := s.store.GetCredentialForAuth(ctx, credID)
-	if errors.Is(err, mysql.ErrNotFound) {
-		return nil, fmt.Errorf("%w: invalid credential", ErrUnauthorized)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !auth.VerifySecretHash(s.pepper, secret, row.SecretHash) ||
-		row.ServiceCode != serviceCode ||
-		(row.Status != model.CredentialStatusActive && row.Status != model.CredentialStatusRotating) {
-		return nil, fmt.Errorf("%w: invalid credential", ErrUnauthorized)
-	}
-	if row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now().UTC()) {
-		return nil, fmt.Errorf("%w: invalid credential", ErrUnauthorized)
-	}
-	if row.ServiceStatus != model.ServiceStatusActive {
-		return nil, fmt.Errorf("%w: service disabled", ErrUnauthorized)
-	}
-	if !netutil.IPAllowed(row.AllowedIPs, peerIP) {
-		return nil, fmt.Errorf("%w: ip denied", ErrUnauthorized)
-	}
-	s.store.TouchCredentialUsed(ctx, row.ID, peerIP)
-	return row, nil
-}
-
 // AuthenticateHMAC WS auth.request：验签 + IP 白名单 + 开启会话骨架。
 func (s *Executor) AuthenticateHMAC(ctx context.Context, req protocol.AuthRequest, peerIP string) (*Session, *protocol.AuthResponse, error) {
 	method := strings.TrimSpace(strings.ToLower(req.Method))
@@ -211,22 +181,6 @@ func pickProtocolVersion(versions []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Register HTTP 联调：token 鉴权后一次性注册（仍可用）。
-func (s *Executor) Register(ctx context.Context, token string, req protocol.RegisterRequest, peerIP string) (*protocol.RegisterResponse, error) {
-	cred, err := s.AuthenticateCredential(ctx, token, strings.TrimSpace(req.ServiceCode), peerIP)
-	if err != nil {
-		return nil, err
-	}
-	sess := &Session{
-		CredentialID:    cred.ID,
-		ServiceID:       cred.ServiceID,
-		ServiceCode:     cred.ServiceCode,
-		InstanceKey:     strings.TrimSpace(req.InstanceKey),
-		AllowedJobCodes: cred.AllowedJobCodes,
-	}
-	return s.RegisterWithSession(ctx, sess, req, peerIP, true)
 }
 
 func (s *Executor) RegisterWithSession(ctx context.Context, sess *Session, req protocol.RegisterRequest, peerIP string, createSession bool) (*protocol.RegisterResponse, error) {
@@ -534,14 +488,6 @@ func (s *Executor) ensureDefaultSchedule(ctx context.Context, jobCode, jobID str
 	return nil, nil
 }
 
-func (s *Executor) Heartbeat(ctx context.Context, token, instanceID, sessionID string, sessionEpoch uint64, req protocol.HeartbeatRequest) (*protocol.HeartbeatResponse, error) {
-	inst, err := s.loadSessionByToken(ctx, token, instanceID, sessionID, sessionEpoch)
-	if err != nil {
-		return nil, err
-	}
-	return s.HeartbeatWithSession(ctx, &Session{InstanceID: inst.ID, SessionEpoch: inst.SessionEpoch}, req)
-}
-
 func (s *Executor) HeartbeatWithSession(ctx context.Context, sess *Session, req protocol.HeartbeatRequest) (*protocol.HeartbeatResponse, error) {
 	draining := strings.EqualFold(req.Status, model.InstanceStatusDraining)
 	var maxPtr *uint
@@ -566,14 +512,6 @@ func (s *Executor) HeartbeatWithSession(ctx context.Context, sess *Session, req 
 	}, nil
 }
 
-func (s *Executor) Unregister(ctx context.Context, token, instanceID, sessionID string, sessionEpoch uint64, _ protocol.UnregisterRequest) error {
-	inst, err := s.loadSessionByToken(ctx, token, instanceID, sessionID, sessionEpoch)
-	if err != nil {
-		return err
-	}
-	return s.UnregisterWithSession(ctx, &Session{InstanceID: inst.ID, SessionEpoch: inst.SessionEpoch})
-}
-
 func (s *Executor) UnregisterWithSession(ctx context.Context, sess *Session) error {
 	if err := s.store.SetInstanceDraining(ctx, sess.InstanceID, sess.SessionEpoch); err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {
@@ -589,34 +527,6 @@ func (s *Executor) Disconnect(ctx context.Context, sess *Session) error {
 		return nil
 	}
 	return s.store.MarkInstanceDisconnected(ctx, sess.InstanceID, sess.SessionEpoch, model.InstanceStatusOffline)
-}
-
-func (s *Executor) loadSessionByToken(ctx context.Context, token, instanceID, sessionID string, sessionEpoch uint64) (*model.Instance, error) {
-	inst, err := s.store.GetInstance(ctx, strings.TrimSpace(instanceID))
-	if errors.Is(err, mysql.ErrNotFound) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	credID, secret, err := auth.ParseCredentialToken(token)
-	if err != nil {
-		return nil, fmt.Errorf("%w: malformed credential", ErrUnauthorized)
-	}
-	row, err := s.store.GetCredentialForAuth(ctx, credID)
-	if err != nil {
-		if errors.Is(err, mysql.ErrNotFound) {
-			return nil, fmt.Errorf("%w: invalid credential", ErrUnauthorized)
-		}
-		return nil, err
-	}
-	if !auth.VerifySecretHash(s.pepper, secret, row.SecretHash) || row.ServiceID != inst.ServiceID {
-		return nil, fmt.Errorf("%w: invalid credential", ErrUnauthorized)
-	}
-	if inst.SessionID != sessionID || inst.SessionEpoch != sessionEpoch {
-		return nil, ErrSessionStale
-	}
-	return inst, nil
 }
 
 func parseRFC3339(raw string) *time.Time {
