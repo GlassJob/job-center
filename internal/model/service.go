@@ -9,7 +9,7 @@ const (
 
 type Service struct {
 	ID          string    `json:"id" gorm:"column:id;primaryKey"`
-	ServiceCode string    `json:"service_code" gorm:"column:service_code"`
+	Code        string    `json:"code" gorm:"column:code"`
 	Name        string    `json:"name" gorm:"column:name"`
 	Description string    `json:"description,omitempty" gorm:"column:description"`
 	Status      string    `json:"status" gorm:"column:status"`

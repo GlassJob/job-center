@@ -10,7 +10,7 @@
 - 分层：`handler` → `service` → `repository`，模型在 `model`
 - 复用已有 `migrations/0001_init.sql`、`migrations/0002_runtime_execution.sql`
 - 模块路径：`github.com/GlassJob/job-center`
-- **首期只实现 Admin API**；gateway/scheduler/execution 建骨架与接口边界
+- Admin API（Phase A）+ Executor **WS Gateway 协议 1.1** 已落地；scheduler/execution 仍后置
 
 ## 目录结构
 
@@ -27,7 +27,7 @@ job-center/
 │   ├── repository/mysql/
 │   ├── service/         # 业务用例（含 execution 创建/取消入口）
 │   ├── handler/         # Gin + middleware + admin/*
-│   ├── gateway/         # WebSocket 骨架
+│   ├── gateway/         # Executor WebSocket（协议 1.1）
 │   ├── scheduler/       # Cron 骨架
 │   ├── execution/       # 状态机/租约/重试骨架
 │   └── pkg/             # database、auth、log、idgen、clock
@@ -70,7 +70,8 @@ flowchart TB
 - GORM + `go-sql-driver/mysql`：Admin CRUD 用 GORM；调度/租约/SKIP LOCKED 等走 `Raw`/`Exec`
 - Viper、slog、google/uuid（v7）、robfig/cron/v3（6 字段秒）、jsonschema/v6
 - 迁移：golang-migrate + embed SQL，启动 MigrateUp（不用 GORM AutoMigrate）
-- 后置：coder/websocket、Prometheus、OpenAPI
+- coder/websocket（Executor Gateway）
+- 后置：Prometheus、OpenAPI
 
 ## Admin 鉴权（已定）
 
@@ -125,27 +126,28 @@ flowchart LR
 - 表结构：新增 `migrations/0003_schedule_triggers.sql`（现网可追加）
 - Admin 首期：只管 `schedules` 定义；triggers 由 scheduler 模块维护，Admin 只读列表可后置
 
-## 首期交付顺序
+## 已交付 / 下阶段
+
+已交付：
 
 1. go.mod + 标准目录 + `internal/pkg`
-2. migrations embed（含 0003 triggers）+ 启动迁移
-3. handler + HMAC + health
+2. migrations embed + 启动迁移（`service_credentials.secret_enc` / `allowed_ips`）
+3. Admin HMAC + health
 4. Phase A Admin：clients / services / credentials / jobs / schedules / states / audits
-5. gateway / scheduler / execution 骨架（scheduler 按 triggers 设计）
-6. Makefile、config.example、README
+5. **Executor WS Gateway 1.1**（HMAC + IP 白名单 + 注册/心跳/注销 + 调度策略 C）
+6. 接口文档：`docs/api.md`、`docs/protocol-websocket-v1.1.md`
 
-## 不做（首期）
+下阶段：
+
+- `schedule_triggers`（0003）+ scheduler 扫描
+- `task.*` 执行帧与 execution 状态机
+- 可选 mTLS / 短期 session token / 节点级授权
+- 删除临时 HTTP `/v1/executor/{register,heartbeat,unregister}`
+- Prometheus、OpenAPI、Makefile/Dockerfile 完善
+
+## 不做（当前阶段）
 
 - 不拆微服务
-- protocol 不放 internal（放 pkg/protocol）
+- protocol 不放 internal（放 `pkg/protocol`）
 - 不引入 Redis / Kafka；不启用 GORM AutoMigrate
-- Admin 首期不强制暴露 triggers CRUD（只维护 schedules 定义）
-
-## 待办清单
-
-- [ ] go.mod + 标准目录骨架（cmd/handler/service/repository/model/pkg）
-- [ ] 新增 0003：`schedule_triggers` 表，并调整 schedules 仅作定义+生成水位
-- [ ] internal/pkg：database 迁移、auth、log、idgen；main 组装
-- [ ] Admin Phase A：鉴权中间件 + client/service/job/schedule/state/audit
-- [ ] gateway/scheduler/execution 骨架；scheduler 基于 triggers 扫描
-- [ ] configs/example、Makefile、Dockerfile、README
+- Admin 不强制暴露 triggers CRUD（只维护 schedules 定义）

@@ -54,7 +54,7 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "service_code already exists")
+		response.Fail(c, http.StatusConflict, 40900, "service code already exists")
 		return
 	}
 	if err != nil {

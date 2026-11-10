@@ -29,16 +29,16 @@ func NewServices(store *mysql.Store) *Services {
 }
 
 type CreateServiceInput struct {
-	ServiceCode string `json:"service_code"`
+	Code        string `json:"code"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
 func (s *Services) CreateService(ctx context.Context, in CreateServiceInput) (*model.Service, error) {
-	code := strings.TrimSpace(in.ServiceCode)
+	code := strings.TrimSpace(in.Code)
 	name := strings.TrimSpace(in.Name)
 	if !serviceCodeRe.MatchString(code) {
-		return nil, fmt.Errorf("%w: service_code", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: code", ErrInvalidInput)
 	}
 	if name == "" || len(name) > 128 {
 		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
@@ -48,7 +48,7 @@ func (s *Services) CreateService(ctx context.Context, in CreateServiceInput) (*m
 	}
 	svc := &model.Service{
 		ID:          idgen.New(),
-		ServiceCode: code,
+		Code:        code,
 		Name:        name,
 		Description: strings.TrimSpace(in.Description),
 		Status:      model.ServiceStatusActive,

@@ -36,7 +36,7 @@ func (s *Store) GetService(ctx context.Context, id string) (*model.Service, erro
 func (s *Store) GetServiceDetail(ctx context.Context, id string) (*model.ServiceDetail, error) {
 	var d model.ServiceDetail
 	tx := s.db.WithContext(ctx).Raw(`
-		SELECT s.id, s.service_code, s.name, COALESCE(s.description,'') AS description, s.status, s.created_at, s.updated_at,
+		SELECT s.id, s.code, s.name, COALESCE(s.description,'') AS description, s.status, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM jobs WHERE service_id = s.id) AS job_count,
 			(SELECT COUNT(*) FROM instances WHERE service_id = s.id) AS instance_count,
 			(SELECT COUNT(*) FROM service_credentials WHERE service_id = s.id) AS credential_count
@@ -63,7 +63,7 @@ func (s *Store) ListServices(ctx context.Context, keyword string, page, limit in
 	q := s.db.WithContext(ctx).Model(&model.Service{})
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		like := "%" + kw + "%"
-		q = q.Where("service_code LIKE ? OR name LIKE ?", like, like)
+		q = q.Where("code LIKE ? OR name LIKE ?", like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

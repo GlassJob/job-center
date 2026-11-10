@@ -9,11 +9,53 @@ import (
 )
 
 type Config struct {
-	NodeID   string         `mapstructure:"node_id"`
-	HTTP     HTTPConfig     `mapstructure:"http"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Security SecurityConfig `mapstructure:"security"`
-	Log      LogConfig      `mapstructure:"log"`
+	NodeID    string          `mapstructure:"node_id"`
+	HTTP      HTTPConfig      `mapstructure:"http"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	Security  SecurityConfig  `mapstructure:"security"`
+	WebSocket WebSocketConfig `mapstructure:"websocket"`
+	Log       LogConfig       `mapstructure:"log"`
+}
+
+type WebSocketConfig struct {
+	AuthTimeout       string `mapstructure:"auth_timeout"`
+	PingInterval      string `mapstructure:"ping_interval"`
+	PingTimeout       string `mapstructure:"ping_timeout"`
+	WriteTimeout      string `mapstructure:"write_timeout"`
+	MaxMessageBytes   int64  `mapstructure:"max_message_bytes"`
+	SendQueueSize     int    `mapstructure:"send_queue_size"`
+	HeartbeatInterval string `mapstructure:"heartbeat_interval"`
+	LeaseTTL          string `mapstructure:"lease_ttl"`
+}
+
+func (w WebSocketConfig) AuthTimeoutDuration() time.Duration {
+	return parseDur(w.AuthTimeout, 10*time.Second)
+}
+func (w WebSocketConfig) PingIntervalDuration() time.Duration {
+	return parseDur(w.PingInterval, 20*time.Second)
+}
+func (w WebSocketConfig) PingTimeoutDuration() time.Duration {
+	return parseDur(w.PingTimeout, 60*time.Second)
+}
+func (w WebSocketConfig) WriteTimeoutDuration() time.Duration {
+	return parseDur(w.WriteTimeout, 10*time.Second)
+}
+func (w WebSocketConfig) HeartbeatIntervalDuration() time.Duration {
+	return parseDur(w.HeartbeatInterval, 10*time.Second)
+}
+func (w WebSocketConfig) LeaseTTLDuration() time.Duration {
+	return parseDur(w.LeaseTTL, 30*time.Second)
+}
+
+func parseDur(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 type HTTPConfig struct {
@@ -67,6 +109,14 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("database.conn_max_lifetime", "1h")
 	v.SetDefault("security.timestamp_skew_seconds", 300)
 	v.SetDefault("security.bootstrap_client_name", "bootstrap")
+	v.SetDefault("websocket.auth_timeout", "10s")
+	v.SetDefault("websocket.ping_interval", "20s")
+	v.SetDefault("websocket.ping_timeout", "60s")
+	v.SetDefault("websocket.write_timeout", "10s")
+	v.SetDefault("websocket.max_message_bytes", int64(1048576))
+	v.SetDefault("websocket.send_queue_size", 64)
+	v.SetDefault("websocket.heartbeat_interval", "10s")
+	v.SetDefault("websocket.lease_ttl", "30s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 
@@ -96,6 +146,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Security.CredentialPepper == "" {
 		return nil, fmt.Errorf("security.credential_pepper is required (config or JC_CREDENTIAL_PEPPER)")
+	}
+	if cfg.WebSocket.MaxMessageBytes <= 0 {
+		cfg.WebSocket.MaxMessageBytes = 1048576
+	}
+	if cfg.WebSocket.SendQueueSize <= 0 {
+		cfg.WebSocket.SendQueueSize = 64
 	}
 	return &cfg, nil
 }

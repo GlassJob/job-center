@@ -13,10 +13,12 @@ type Credential struct {
 	ServiceID       string     `gorm:"column:service_id"`
 	Name            string     `gorm:"column:name"`
 	SecretHash      []byte     `gorm:"column:secret_hash"`
+	SecretEnc       []byte     `gorm:"column:secret_enc"`
 	HashAlgo        string     `gorm:"column:hash_algo"`
 	SecretHint      string     `gorm:"column:secret_hint"`
 	Status          string     `gorm:"column:status"`
 	AllowedJobCodes *[]string  `gorm:"column:allowed_job_codes;serializer:json"`
+	AllowedIPs      *[]string  `gorm:"column:allowed_ips;serializer:json"`
 	ExpiresAt       *time.Time `gorm:"column:expires_at"`
 	LastUsedAt      *time.Time `gorm:"column:last_used_at"`
 	LastUsedIP      string     `gorm:"column:last_used_ip"`
@@ -28,7 +30,7 @@ type Credential struct {
 
 func (Credential) TableName() string { return "service_credentials" }
 
-// CredentialView 对外视图：永不包含 secret_hash / 明文 secret。
+// CredentialView 对外视图：永不包含 secret_hash / secret_enc / 明文 secret。
 type CredentialView struct {
 	ID              string     `json:"id"`
 	ServiceID       string     `json:"service_id"`
@@ -37,6 +39,7 @@ type CredentialView struct {
 	HashAlgo        string     `json:"hash_algo"`
 	Status          string     `json:"status"`
 	AllowedJobCodes *[]string  `json:"allowed_job_codes"`
+	AllowedIPs      *[]string  `json:"allowed_ips"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt      *time.Time `json:"last_used_at,omitempty"`
 	LastUsedIP      string     `json:"last_used_ip,omitempty"`
@@ -55,6 +58,7 @@ func (c *Credential) View() CredentialView {
 		HashAlgo:        c.HashAlgo,
 		Status:          c.Status,
 		AllowedJobCodes: c.AllowedJobCodes,
+		AllowedIPs:      c.AllowedIPs,
 		ExpiresAt:       c.ExpiresAt,
 		LastUsedAt:      c.LastUsedAt,
 		LastUsedIP:      c.LastUsedIP,
@@ -65,8 +69,9 @@ func (c *Credential) View() CredentialView {
 	}
 }
 
-// CredentialCreated 创建/轮换响应：secret 仅此一次。
+// CredentialCreated 创建/轮换响应：secret / token 仅此一次。
 type CredentialCreated struct {
 	CredentialView
 	Secret string `json:"secret"`
+	Token  string `json:"token"` // jcs_<id>.<secret>，HTTP 联调用；WS 用 HMAC
 }

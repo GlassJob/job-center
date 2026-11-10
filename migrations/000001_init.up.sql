@@ -45,14 +45,14 @@ CREATE TABLE IF NOT EXISTS `clients` (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `services` (
   `id`            CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'UUID v7',
-  `service_code`  VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '业务编码，^[a-z0-9][a-z0-9._-]{1,63}$，全局唯一',
+  `code`          VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '业务编码，^[a-z0-9][a-z0-9._-]{1,63}$，全局唯一',
   `name`          VARCHAR(128) NOT NULL COMMENT '展示名',
   `description`   VARCHAR(1000) NULL COMMENT '服务说明',
   `status`        VARCHAR(16) CHARACTER SET ascii NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE=可用；DISABLED=停用（软禁用）',
   `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间 UTC',
   `updated_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最后更新时间 UTC',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_service_code` (`service_code`),
+  UNIQUE KEY `uk_services_code` (`code`),
   CONSTRAINT `ck_services_status` CHECK (`status` IN ('ACTIVE','DISABLED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='逻辑服务';
 
@@ -63,11 +63,13 @@ CREATE TABLE IF NOT EXISTS `service_credentials` (
   `id`                 CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT 'UUID v7，公开凭据 ID（非密钥）',
   `service_id`         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '所属 services.id',
   `name`               VARCHAR(128) NOT NULL COMMENT '展示名，同服务内唯一',
-  `secret_hash`        BINARY(32) NOT NULL COMMENT 'HMAC-SHA256(server_pepper, secret)，用于验签比对',
+  `secret_hash`        BINARY(32) NOT NULL COMMENT 'HMAC-SHA256(server_pepper, secret)，用于明文凭据比对',
+  `secret_enc`         VARBINARY(512) NOT NULL COMMENT 'AES-GCM 加密后的 secret，供 Executor HMAC 验签取回',
   `hash_algo`          VARCHAR(32) CHARACTER SET ascii NOT NULL DEFAULT 'hmac-sha256-v1' COMMENT '密钥哈希算法标识',
   `secret_hint`        VARCHAR(8) CHARACTER SET ascii NULL COMMENT '明文尾缀提示，便于人工辨认',
   `status`             VARCHAR(16) CHARACTER SET ascii NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE=可用；ROTATING=轮换中；REVOKED=已吊销',
   `allowed_job_codes`  JSON NULL COMMENT '可调用的 job.code 数组，支持前缀通配；NULL=本服务全部 Job',
+  `allowed_ips`        JSON NULL COMMENT '允许来源 IP/CIDR 数组；NULL=不限制',
   `expires_at`         DATETIME(3) NULL COMMENT '过期时间 UTC；NULL=不过期',
   `last_used_at`       DATETIME(3) NULL COMMENT '最近一次成功鉴权时间 UTC',
   `last_used_ip`       VARCHAR(45) CHARACTER SET ascii NULL COMMENT '最近一次成功鉴权来源 IP',
@@ -80,7 +82,8 @@ CREATE TABLE IF NOT EXISTS `service_credentials` (
   KEY `idx_service_status` (`service_id`, `status`),
   CONSTRAINT `fk_cred_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `ck_creds_status` CHECK (`status` IN ('ACTIVE','ROTATING','REVOKED')),
-  CONSTRAINT `ck_creds_allowed_json` CHECK (`allowed_job_codes` IS NULL OR JSON_TYPE(`allowed_job_codes`) = 'ARRAY')
+  CONSTRAINT `ck_creds_allowed_json` CHECK (`allowed_job_codes` IS NULL OR JSON_TYPE(`allowed_job_codes`) = 'ARRAY'),
+  CONSTRAINT `ck_creds_ips` CHECK (`allowed_ips` IS NULL OR JSON_TYPE(`allowed_ips`) = 'ARRAY')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='服务凭据（Executor/业务 API）';
 
 -- ---------------------------------------------------------------------

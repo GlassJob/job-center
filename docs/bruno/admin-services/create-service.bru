@@ -12,14 +12,15 @@ post {
 
 body:json {
   {
-    "service_code": "demo.app",
+    "code": "demo.app",
     "name": "Demo",
     "description": "from bruno"
   }
 }
 
 script:post-response {
-  if (res.status === 200 && res.body && res.body.data && res.body.data.id) {
-    bru.setEnvVar('service_id', res.body.data.id);
+  if (res.status === 200 && res.body && res.body.data) {
+    if (res.body.data.id) bru.setEnvVar('service_id', res.body.data.id);
+    if (res.body.data.code) bru.setEnvVar('service_code', res.body.data.code);
   }
 }

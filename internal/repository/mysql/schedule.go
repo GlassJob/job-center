@@ -66,6 +66,18 @@ func (s *Store) GetSchedule(ctx context.Context, jobID, id string) (*model.Sched
 	return &sch, nil
 }
 
+func (s *Store) GetScheduleByJobAndCode(ctx context.Context, jobID, code string) (*model.Schedule, error) {
+	var sch model.Schedule
+	err := s.db.WithContext(ctx).Where("job_id = ? AND code = ?", jobID, code).First(&sch).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &sch, nil
+}
+
 func (s *Store) ExistsScheduleCode(ctx context.Context, jobID, code, excludeID string) (bool, error) {
 	q := s.db.WithContext(ctx).Model(&model.Schedule{}).Where("job_id = ? AND code = ?", jobID, code)
 	if excludeID != "" {

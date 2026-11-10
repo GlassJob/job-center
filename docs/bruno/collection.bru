@@ -54,7 +54,12 @@ script:pre-request {
   
   var rawUrl = req.getUrl();
   var resolved = resolve(rawUrl);
-  if (resolved.indexOf('/health/') >= 0) {
+  if (
+    resolved.indexOf('/health/') >= 0 ||
+    resolved.indexOf('/v1/executor/') >= 0 ||
+    resolved.indexOf('ws://') === 0 ||
+    resolved.indexOf('wss://') === 0
+  ) {
     return;
   }
   
@@ -118,7 +123,10 @@ script:pre-request {
 }
 
 docs {
-  # job-center Admin
+  # job-center
   
-  请求文件用 body:json；collection 预请求里转成 compact text 再签名并 setBody。
+  - 接口总览：`docs/api.md`
+  - Executor WS：`executor/ws.bru`（Bruno WebSocket，子协议 jobcenter.v1）
+  - Admin 请求用 body:json；本 collection 预请求转 compact text 再 HMAC 签名
+  - `/health/*`、`/v1/executor/*`、`ws://` 跳过 Admin 签名
 }

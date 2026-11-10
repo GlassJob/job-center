@@ -78,6 +78,20 @@ func Sign(secret, canonical string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// ExecutorAuthCanonical:
+//
+//	AUTH\n{code}\n{credential_id}\n{instance_key}\n{timestamp}\n{nonce}
+func ExecutorAuthCanonical(code, credentialID, instanceKey, timestamp, nonce string) string {
+	return strings.Join([]string{
+		"AUTH",
+		code,
+		credentialID,
+		instanceKey,
+		timestamp,
+		nonce,
+	}, "\n")
+}
+
 func VerifySignature(secret, canonical, sigHex string) bool {
 	want, err := hex.DecodeString(sigHex)
 	if err != nil {

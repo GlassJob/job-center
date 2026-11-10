@@ -73,17 +73,28 @@ type CredentialPatch struct {
 	Name               *string
 	SetAllowedJobCodes bool
 	AllowedJobCodes    *[]string
+	SetAllowedIPs      bool
+	AllowedIPs         *[]string
 	SetExpiresAt       bool
 	ExpiresAt          *time.Time
 }
 
 func (s *Store) PatchCredential(ctx context.Context, serviceID, id string, p CredentialPatch) (*model.Credential, error) {
-	if p.Name == nil && !p.SetAllowedJobCodes && !p.SetExpiresAt {
+	if p.Name == nil && !p.SetAllowedJobCodes && !p.SetAllowedIPs && !p.SetExpiresAt {
 		return s.GetCredential(ctx, serviceID, id)
 	}
-	if p.SetAllowedJobCodes && p.AllowedJobCodes != nil {
-		row := model.Credential{AllowedJobCodes: p.AllowedJobCodes}
-		fields := []string{"allowed_job_codes"}
+	needSelect := (p.SetAllowedJobCodes && p.AllowedJobCodes != nil) || (p.SetAllowedIPs && p.AllowedIPs != nil)
+	if needSelect {
+		row := model.Credential{}
+		fields := []string{}
+		if p.SetAllowedJobCodes && p.AllowedJobCodes != nil {
+			row.AllowedJobCodes = p.AllowedJobCodes
+			fields = append(fields, "allowed_job_codes")
+		}
+		if p.SetAllowedIPs && p.AllowedIPs != nil {
+			row.AllowedIPs = p.AllowedIPs
+			fields = append(fields, "allowed_ips")
+		}
 		if p.Name != nil {
 			row.Name = *p.Name
 			fields = append(fields, "name")
@@ -92,13 +103,30 @@ func (s *Store) PatchCredential(ctx context.Context, serviceID, id string, p Cre
 			row.ExpiresAt = p.ExpiresAt
 			fields = append(fields, "expires_at")
 		}
+		if p.SetAllowedJobCodes && p.AllowedJobCodes == nil {
+			// clear handled below via map updates after select path for non-nil only
+		}
 		res := s.db.WithContext(ctx).Model(&model.Credential{}).
 			Where("id = ? AND service_id = ?", id, serviceID).
 			Select(fields).Updates(&row)
 		if res.Error != nil {
 			return nil, res.Error
 		}
-		if res.RowsAffected == 0 {
+		// also apply clears / name-only via map if needed
+		updates := map[string]any{}
+		if p.SetAllowedJobCodes && p.AllowedJobCodes == nil {
+			updates["allowed_job_codes"] = nil
+		}
+		if p.SetAllowedIPs && p.AllowedIPs == nil {
+			updates["allowed_ips"] = nil
+		}
+		if len(updates) > 0 {
+			if err := s.db.WithContext(ctx).Model(&model.Credential{}).
+				Where("id = ? AND service_id = ?", id, serviceID).Updates(updates).Error; err != nil {
+				return nil, err
+			}
+		}
+		if res.RowsAffected == 0 && len(updates) == 0 {
 			if _, err := s.GetCredential(ctx, serviceID, id); err != nil {
 				return nil, err
 			}
@@ -112,6 +140,9 @@ func (s *Store) PatchCredential(ctx context.Context, serviceID, id string, p Cre
 	}
 	if p.SetAllowedJobCodes {
 		updates["allowed_job_codes"] = nil
+	}
+	if p.SetAllowedIPs {
+		updates["allowed_ips"] = nil
 	}
 	if p.SetExpiresAt {
 		if p.ExpiresAt == nil {
@@ -133,11 +164,12 @@ func (s *Store) PatchCredential(ctx context.Context, serviceID, id string, p Cre
 	return s.GetCredential(ctx, serviceID, id)
 }
 
-func (s *Store) RotateCredentialSecret(ctx context.Context, serviceID, id string, hash []byte, hint, hashAlgo string) (*model.Credential, error) {
+func (s *Store) RotateCredentialSecret(ctx context.Context, serviceID, id string, hash, enc []byte, hint, hashAlgo string) (*model.Credential, error) {
 	res := s.db.WithContext(ctx).Model(&model.Credential{}).
 		Where("id = ? AND service_id = ? AND status <> ?", id, serviceID, model.CredentialStatusRevoked).
 		Updates(map[string]any{
 			"secret_hash": hash,
+			"secret_enc":  enc,
 			"secret_hint": hint,
 			"hash_algo":   hashAlgo,
 			"status":      model.CredentialStatusActive,

@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/GlassJob/job-center/internal/config"
+	"github.com/GlassJob/job-center/internal/gateway"
 	"github.com/GlassJob/job-center/internal/handler/admin"
+	"github.com/GlassJob/job-center/internal/handler/executor"
 	"github.com/GlassJob/job-center/internal/handler/middleware"
 	"github.com/GlassJob/job-center/internal/pkg/auth"
 	"github.com/GlassJob/job-center/internal/repository/mysql"
@@ -13,9 +17,12 @@ import (
 )
 
 type Deps struct {
-	Store  *mysql.Store
-	Pepper string
-	Skew   time.Duration
+	Store     *mysql.Store
+	Pepper    string
+	Skew      time.Duration
+	NodeID    string
+	WebSocket config.WebSocketConfig
+	Log       *slog.Logger
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -37,6 +44,8 @@ func NewRouter(d Deps) *gin.Engine {
 	states := service.NewJobStates(d.Store)
 	schedules := service.NewSchedules(d.Store)
 	audits := service.NewAudits(d.Store)
+	exec := service.NewExecutor(d.Store, d.Pepper, d.NodeID, d.Skew)
+	gw := gateway.NewServer(exec, d.WebSocket, d.Log)
 	svcH := &admin.ServiceHandler{Services: services, Store: d.Store}
 	cliH := &admin.ClientHandler{Clients: clients, Store: d.Store}
 	credH := &admin.CredentialHandler{Credentials: creds, Store: d.Store}
@@ -44,6 +53,7 @@ func NewRouter(d Deps) *gin.Engine {
 	stateH := &admin.JobStateHandler{States: states, Store: d.Store}
 	schH := &admin.ScheduleHandler{Schedules: schedules, Store: d.Store}
 	auditH := &admin.AuditHandler{Audits: audits}
+	execH := &executor.Handler{Executor: exec}
 
 	adminAPI := r.Group("/v1/admin")
 	{
@@ -88,6 +98,14 @@ func NewRouter(d Deps) *gin.Engine {
 
 		adminAPI.GET("/audits", middleware.Auth(authCfg, "job.audit.view"), auditH.List)
 		adminAPI.GET("/audits/:auditId", middleware.Auth(authCfg, "job.audit.view"), auditH.Get)
+	}
+
+	execAPI := r.Group("/v1/executor")
+	{
+		execAPI.GET("/ws", gw.GinHandler())
+		execAPI.POST("/register", execH.Register)
+		execAPI.POST("/heartbeat", execH.Heartbeat)
+		execAPI.POST("/unregister", execH.Unregister)
 	}
 	return r
 }

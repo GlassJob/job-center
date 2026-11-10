@@ -25,6 +25,7 @@ func NewCredentials(store *mysql.Store, pepper string) *Credentials {
 type CreateCredentialInput struct {
 	Name            string     `json:"name"`
 	AllowedJobCodes *[]string  `json:"allowed_job_codes"`
+	AllowedIPs      *[]string  `json:"allowed_ips"`
 	ExpiresAt       *time.Time `json:"expires_at"`
 }
 
@@ -33,6 +34,8 @@ type PatchCredentialInput struct {
 	// AllowedJobCodes: omit=不改；显式 null JSON 用 ClearAllowedJobCodes
 	AllowedJobCodes      *[]string  `json:"allowed_job_codes"`
 	ClearAllowedJobCodes bool       `json:"clear_allowed_job_codes"`
+	AllowedIPs           *[]string  `json:"allowed_ips"`
+	ClearAllowedIPs      bool       `json:"clear_allowed_ips"`
 	ExpiresAt            *time.Time `json:"expires_at"`
 	ClearExpiresAt       bool       `json:"clear_expires_at"`
 }
@@ -108,7 +111,15 @@ func (s *Credentials) Create(ctx context.Context, serviceID string, in CreateCre
 	if err != nil {
 		return nil, err
 	}
+	ips, err := normalizeIPs(in.AllowedIPs)
+	if err != nil {
+		return nil, err
+	}
 	secret, err := auth.NewClientSecret()
+	if err != nil {
+		return nil, err
+	}
+	enc, err := auth.EncryptSecret(s.pepper, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -117,10 +128,12 @@ func (s *Credentials) Create(ctx context.Context, serviceID string, in CreateCre
 		ServiceID:       serviceID,
 		Name:            name,
 		SecretHash:      auth.HashSecret(s.pepper, secret),
+		SecretEnc:       enc,
 		HashAlgo:        auth.HashAlgo,
 		SecretHint:      auth.SecretHint(secret),
 		Status:          model.CredentialStatusActive,
 		AllowedJobCodes: codes,
+		AllowedIPs:      ips,
 		ExpiresAt:       in.ExpiresAt,
 		CreatedBy:       createdBy,
 	}
@@ -131,7 +144,11 @@ func (s *Credentials) Create(ctx context.Context, serviceID string, in CreateCre
 	if err != nil {
 		return nil, err
 	}
-	return &model.CredentialCreated{CredentialView: got.View(), Secret: secret}, nil
+	return &model.CredentialCreated{
+		CredentialView: got.View(),
+		Secret:         secret,
+		Token:          auth.FormatCredentialToken(got.ID, secret),
+	}, nil
 }
 
 func (s *Credentials) Patch(ctx context.Context, serviceID, id string, in PatchCredentialInput) (*model.CredentialView, error) {
@@ -160,6 +177,17 @@ func (s *Credentials) Patch(ctx context.Context, serviceID, id string, in PatchC
 		}
 		p.SetAllowedJobCodes = true
 		p.AllowedJobCodes = codes
+	}
+	if in.ClearAllowedIPs {
+		p.SetAllowedIPs = true
+		p.AllowedIPs = nil
+	} else if in.AllowedIPs != nil {
+		ips, err := normalizeIPs(in.AllowedIPs)
+		if err != nil {
+			return nil, err
+		}
+		p.SetAllowedIPs = true
+		p.AllowedIPs = ips
 	}
 	if in.ClearExpiresAt {
 		p.SetExpiresAt = true
@@ -194,7 +222,11 @@ func (s *Credentials) Rotate(ctx context.Context, serviceID, id string) (*model.
 	if err != nil {
 		return nil, err
 	}
-	c, err := s.store.RotateCredentialSecret(ctx, serviceID, id, auth.HashSecret(s.pepper, secret), auth.SecretHint(secret), auth.HashAlgo)
+	enc, err := auth.EncryptSecret(s.pepper, secret)
+	if err != nil {
+		return nil, err
+	}
+	c, err := s.store.RotateCredentialSecret(ctx, serviceID, id, auth.HashSecret(s.pepper, secret), enc, auth.SecretHint(secret), auth.HashAlgo)
 	if errors.Is(err, mysql.ErrNotFound) {
 		return nil, ErrNotFound
 	}
@@ -204,7 +236,11 @@ func (s *Credentials) Rotate(ctx context.Context, serviceID, id string) (*model.
 	if err != nil {
 		return nil, err
 	}
-	return &model.CredentialCreated{CredentialView: c.View(), Secret: secret}, nil
+	return &model.CredentialCreated{
+		CredentialView: c.View(),
+		Secret:         secret,
+		Token:          auth.FormatCredentialToken(c.ID, secret),
+	}, nil
 }
 
 type DeleteCredentialResult struct {
@@ -246,6 +282,29 @@ func normalizeJobCodes(in *[]string) (*[]string, error) {
 		}
 		if len(s) > 128 {
 			return nil, fmt.Errorf("%w: job_code too long", ErrInvalidInput)
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return &out, nil
+}
+
+func normalizeIPs(in *[]string) (*[]string, error) {
+	if in == nil {
+		return nil, nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(*in))
+	for _, s := range *in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if len(s) > 64 {
+			return nil, fmt.Errorf("%w: allowed_ips entry too long", ErrInvalidInput)
 		}
 		if _, ok := seen[s]; ok {
 			continue

@@ -18,6 +18,16 @@ security:
   bootstrap_client_secret: ""
   bootstrap_client_name: bootstrap
 
+websocket:
+  auth_timeout: 10s
+  ping_interval: 20s
+  ping_timeout: 60s
+  write_timeout: 10s
+  max_message_bytes: 1048576
+  send_queue_size: 64
+  heartbeat_interval: 10s
+  lease_ttl: 30s
+
 log:
   level: info
   format: json

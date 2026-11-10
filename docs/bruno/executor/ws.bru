@@ -1,0 +1,140 @@
+meta {
+  name: WS Gateway (协议 1.1)
+  type: ws
+  seq: 1
+}
+
+ws {
+  url: {{ws_url}}
+  body: ws
+  auth: none
+}
+
+headers {
+  Sec-WebSocket-Protocol: jobcenter.v1
+}
+
+docs {
+  # GET /v1/executor/ws
+  
+  1. Create credential → 环境变量 `executor_secret` / `credential_id` / `service_code`
+  2. Connect（预请求自动算 HMAC）
+  3. 依次 Send：auth.request → service.register → service.heartbeat →（可选）unregister
+  4. Disconnect
+  
+  注意：`ws_url` 必须是 `ws://…/v1/executor/ws`，不要用 `{{base_url}}`（http）。
+  子协议必须 `jobcenter.v1`。见 `docs/protocol-websocket-v1.1.md`。
+}
+
+script:pre-request {
+  var CryptoJS = require('crypto-js');
+  var secret = String(bru.getEnvVar('executor_secret') || '').trim();
+  var code = String(bru.getEnvVar('service_code') || '').trim();
+  var credId = String(bru.getEnvVar('credential_id') || '').trim();
+  var instanceKey = String(bru.getEnvVar('ws_instance_key') || 'bruno-local-1').trim();
+  bru.setEnvVar('ws_instance_key', instanceKey);
+
+  if (!secret || !code || !credId) {
+    console.log('WS auth: set executor_secret / service_code / credential_id (Create credential first)');
+    return;
+  }
+
+  var ts = String(Math.floor(Date.now() / 1000));
+  var nonce = CryptoJS.lib.WordArray.random(8).toString();
+  var canon = ['AUTH', code, credId, instanceKey, ts, nonce].join('\n');
+  var sig = CryptoJS.HmacSHA256(canon, secret).toString(CryptoJS.enc.Hex);
+
+  bru.setEnvVar('auth_timestamp', ts);
+  bru.setEnvVar('auth_nonce', nonce);
+  bru.setEnvVar('auth_signature', sig);
+  console.log('WS auth ready', 'code=', code, 'cred=', credId, 'instance=', instanceKey, 'ts=', ts);
+}
+
+body:ws {
+  name: auth.request
+  type: json
+  content: '''
+  {
+    "protocol_version": "1.1",
+    "message_id": "m_bruno_auth",
+    "type": "auth.request",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "data": {
+      "method": "hmac",
+      "code": "{{service_code}}",
+      "credential_id": "{{credential_id}}",
+      "instance_key": "{{ws_instance_key}}",
+      "timestamp": "{{auth_timestamp}}",
+      "nonce": "{{auth_nonce}}",
+      "signature": "{{auth_signature}}",
+      "protocol_versions": ["1.1"],
+      "sdk": { "language": "bruno", "version": "0.1.0" }
+    }
+  }
+  '''
+}
+
+body:ws {
+  name: service.register
+  type: json
+  content: '''
+  {
+    "protocol_version": "1.1",
+    "message_id": "m_bruno_reg",
+    "type": "service.register",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "data": {
+      "code": "{{service_code}}",
+      "instance_key": "{{ws_instance_key}}",
+      "environment": "dev",
+      "host": { "hostname": "bruno-host", "ip": "127.0.0.1", "pid": 1 },
+      "runtime": { "language": "go", "version": "go1.25" },
+      "deployment": { "version": "0.1.0" },
+      "capacity": { "max_concurrency": 2 },
+      "sdk_version": "0.1.0",
+      "jobs": [
+        {
+          "job_code": "demo.hello",
+          "job_name": "Hello",
+          "handler": "demo.hello",
+          "handler_version": "1.0.0",
+          "default_cron": "0 */5 * * * *",
+          "timeout_seconds": 30,
+          "params_schema": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+          }
+        }
+      ]
+    }
+  }
+  '''
+}
+
+body:ws {
+  name: service.heartbeat
+  type: json
+  content: '''
+  {
+    "protocol_version": "1.1",
+    "message_id": "m_bruno_hb",
+    "type": "service.heartbeat",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "data": { "status": "ONLINE", "running": 0 }
+  }
+  '''
+}
+
+body:ws {
+  name: service.unregister
+  type: json
+  content: '''
+  {
+    "protocol_version": "1.1",
+    "message_id": "m_bruno_unreg",
+    "type": "service.unregister",
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "data": { "reason": "bruno disconnect" }
+  }
+  '''
+}

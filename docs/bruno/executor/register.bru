@@ -1,0 +1,71 @@
+meta {
+  name: Register instance (HTTP 联调)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/executor/register
+  body: json
+  auth: none
+}
+
+headers {
+  X-JC-Credential: {{executor_credential}}
+}
+
+docs {
+  # Register（HTTP 临时）
+  
+  Body 与 WS `service.register` 相同。正式接入请用 `GET /v1/executor/ws`。
+  `default_cron` 为 6 段；策略 C：仅首次插入 default schedule，冲突进 warnings。
+}
+
+body:json {
+  {
+    "code": "{{service_code}}",
+    "instance_key": "local-dev-1",
+    "environment": "dev",
+    "host": {
+      "hostname": "dev-host",
+      "ip": "127.0.0.1",
+      "pid": 1
+    },
+    "runtime": {
+      "language": "go",
+      "version": "go1.25"
+    },
+    "deployment": {
+      "version": "0.1.0",
+      "git_commit": "deadbeef"
+    },
+    "capacity": {
+      "max_concurrency": 2
+    },
+    "sdk_version": "0.1.0",
+    "jobs": [
+      {
+        "job_code": "demo.hello",
+        "job_name": "Hello",
+        "handler": "demo.hello",
+        "handler_version": "1.0.0",
+        "default_cron": "0 */5 * * * *",
+        "timeout_seconds": 30,
+        "params_schema": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" }
+          }
+        }
+      }
+    ]
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data) {
+    if (res.body.data.instance_id) bru.setEnvVar('instance_id', res.body.data.instance_id);
+    if (res.body.data.session_id) bru.setEnvVar('session_id', res.body.data.session_id);
+    if (res.body.data.session_epoch != null) bru.setEnvVar('session_epoch', String(res.body.data.session_epoch));
+  }
+}

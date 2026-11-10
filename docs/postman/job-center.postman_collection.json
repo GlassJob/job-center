@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "job-center Admin",
-    "description": "Import + select env「job-center local」。Admin 请求自动 HMAC；health 跳过签名。",
+    "description": "Import + select env「job-center local」。Admin 请求自动 HMAC；health 跳过签名。\n\n接口总览见 docs/api.md；Executor 主路径为 WebSocket GET /v1/executor/ws（docs/protocol-websocket-v1.1.md），本集合主要为 Admin 子集。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -96,7 +96,7 @@
             "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"service_code\": \"demo.app\",\n  \"name\": \"Demo\",\n  \"description\": \"from postman\"\n}",
+              "raw": "{\n  \"code\": \"demo.app\",\n  \"name\": \"Demo\",\n  \"description\": \"from postman\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": "{{base_url}}/v1/admin/services"

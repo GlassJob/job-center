@@ -67,9 +67,12 @@ func run() error {
 	}
 
 	r := handler.NewRouter(handler.Deps{
-		Store:  store,
-		Pepper: cfg.Security.CredentialPepper,
-		Skew:   cfg.Security.TimestampSkew(),
+		Store:     store,
+		Pepper:    cfg.Security.CredentialPepper,
+		Skew:      cfg.Security.TimestampSkew(),
+		NodeID:    cfg.NodeID,
+		WebSocket: cfg.WebSocket,
+		Log:       log,
 	})
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: r}
 
