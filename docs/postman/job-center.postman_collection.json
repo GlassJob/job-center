@@ -1,0 +1,221 @@
+{
+  "info": {
+    "name": "job-center Admin",
+    "description": "Import + select env「job-center local」。Admin 请求自动 HMAC；health 跳过签名。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const resolved = pm.variables.replaceIn(pm.request.url.toString());",
+          "if (resolved.indexOf('/health/') >= 0) { return; }",
+          "",
+          "const CryptoJS = require('crypto-js');",
+          "const clientId = pm.environment.get('client_id') || '';",
+          "const secret = pm.environment.get('client_secret') || '';",
+          "const opId = pm.environment.get('operator_id') || '';",
+          "const opName = pm.environment.get('operator_name') || '';",
+          "if (!clientId || !secret) throw new Error('Set client_id and client_secret in environment');",
+          "",
+          "function rfc3986(s) {",
+          "  return encodeURIComponent(String(s)).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());",
+          "}",
+          "",
+          "const method = pm.request.method.toUpperCase();",
+          "const u = new URL(resolved);",
+          "const path = u.pathname;",
+          "const pairs = [];",
+          "u.searchParams.forEach((v, k) => pairs.push([k, v]));",
+          "pairs.sort((a, b) => a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : (a[0] < b[0] ? -1 : 1));",
+          "const query = pairs.map(([k, v]) => rfc3986(k) + '=' + rfc3986(v)).join('&');",
+          "",
+          "let body = '';",
+          "if (pm.request.body && pm.request.body.mode === 'raw' && pm.request.body.raw) {",
+          "  body = pm.variables.replaceIn(pm.request.body.raw);",
+          "}",
+          "const bodyHash = CryptoJS.SHA256(body).toString(CryptoJS.enc.Hex);",
+          "const ts = String(Math.floor(Date.now() / 1000));",
+          "const nonce = CryptoJS.lib.WordArray.random(16).toString();",
+          "const canonical = [method, path, query, clientId, ts, nonce, opId, opName, bodyHash].join('\\n');",
+          "const sig = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);",
+          "",
+          "pm.request.headers.upsert({ key: 'X-JC-Client-Id', value: clientId });",
+          "pm.request.headers.upsert({ key: 'X-JC-Timestamp', value: ts });",
+          "pm.request.headers.upsert({ key: 'X-JC-Nonce', value: nonce });",
+          "pm.request.headers.upsert({ key: 'X-JC-Operator-Id', value: opId });",
+          "pm.request.headers.upsert({ key: 'X-JC-Operator-Name', value: opName });",
+          "pm.request.headers.upsert({ key: 'X-JC-Signature', value: sig });",
+          "if (body !== '') pm.request.headers.upsert({ key: 'Content-Type', value: 'application/json' });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "health",
+      "item": [
+        {
+          "name": "live",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/health/live" }
+        },
+        {
+          "name": "ready",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/health/ready" }
+        }
+      ]
+    },
+    {
+      "name": "admin / services",
+      "item": [
+        {
+          "name": "List services",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/services?page=1&limit=20"
+          }
+        },
+        {
+          "name": "Create service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try { const j = pm.response.json(); if (j && j.data && j.data.id) pm.environment.set('service_id', j.data.id); } catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"service_code\": \"demo.app\",\n  \"name\": \"Demo\",\n  \"description\": \"from postman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/admin/services"
+          }
+        },
+        {
+          "name": "Get service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/services/{{service_id}}"
+          }
+        },
+        {
+          "name": "Patch service",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Demo Updated\",\n  \"status\": \"ACTIVE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/admin/services/{{service_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "admin / clients",
+      "item": [
+        {
+          "name": "List clients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/clients?page=1&limit=20"
+          }
+        },
+        {
+          "name": "Create client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j && j.data && j.data.id) pm.environment.set('managed_client_id', j.data.id);",
+                  "  if (j && j.data && j.data.secret) console.log('new client secret (save once):', j.data.secret);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ci-bot\",\n  \"description\": \"from postman\",\n  \"scopes\": [\"job.service.view\", \"job.service.manage\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/admin/clients"
+          }
+        },
+        {
+          "name": "Get client",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/clients/{{managed_client_id}}"
+          }
+        },
+        {
+          "name": "Patch client",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ci-bot-renamed\",\n  \"scopes\": [\"*\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{base_url}}/v1/admin/clients/{{managed_client_id}}"
+          }
+        },
+        {
+          "name": "Rotate client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j && j.data && j.data.secret) console.log('rotated secret (save once):', j.data.secret);",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/clients/{{managed_client_id}}/rotate"
+          }
+        },
+        {
+          "name": "Revoke client",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/v1/admin/clients/{{managed_client_id}}/revoke"
+          }
+        }
+      ]
+    }
+  ]
+}

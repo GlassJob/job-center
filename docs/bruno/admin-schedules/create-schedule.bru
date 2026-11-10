@@ -1,0 +1,32 @@
+meta {
+  name: Create schedule
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/schedules
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "hourly",
+    "name": "Hourly run",
+    "enabled": false,
+    "manual_enabled": true,
+    "cron_expression": "0 0 * * * *",
+    "timezone": "UTC",
+    "timeout_seconds": 300
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar('schedule_id', res.body.data.id);
+    if (res.body.data.version != null) {
+      bru.setEnvVar('schedule_version', String(res.body.data.version));
+    }
+  }
+}

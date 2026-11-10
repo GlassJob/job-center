@@ -1,0 +1,10 @@
+configs/local.yaml
+docs/bruno/environments/local.bru
+docs/postman/job-center.local.postman_environment.json
+tmp_*.py
+*.exe
+bin/
+dist/
+.idea/
+.vscode/
+*.log

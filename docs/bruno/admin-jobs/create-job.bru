@@ -1,0 +1,26 @@
+meta {
+  name: Create job
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "demo.echo",
+    "name": "Echo",
+    "description": "from bruno",
+    "enabled": true
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar('job_id', res.body.data.id);
+  }
+}

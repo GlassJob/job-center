@@ -1,0 +1,19 @@
+---
+description: 发版前 SQL 迁移合并为单一版本；日常可多文件，打 tag/发版前必须收拢
+globs: job-center/migrations/**/*
+alwaysApply: true
+---
+
+# SQL 迁移发版约定
+
+- Schema 只走 `migrations/` + golang-migrate；**禁止** GORM AutoMigrate 改表。
+- 日常开发可以临时多份 `*.up.sql` / `*.down.sql` 方便迭代。
+- **Git 发版前（打 tag / 合并到发布分支 / 对外发布）**：把本版本相对上一发布点的**全部** SQL 变更收拢成 **一个** migrate 版本（一对 `NNNNNN_*.up.sql` + `NNNNNN_*.down.sql`）。
+- 未发布过的库（含本地重建）：发版前应合并为从空库可达的连续版本，避免把调试过程中的中间迁移带进发布物。
+- 已发布版本的 migration **不得改写**；发布后的修正只能新增下一版本。
+- 合并后核对：`up` 可从空库建全量；`down` 与 up 对应；启动 `MigrateUp` 一次成功。
+
+```text
+❌ 发版物里残留：000001_a、000002_b、000003_c（同一次未发布迭代拆出的中间稿）
+✅ 发版物：000001_init（本发布全部 schema）或上一发布之后仅 00000N_release_x
+```

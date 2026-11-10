@@ -1,0 +1,11 @@
+meta {
+  name: Delete client (hard)
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{base_url}}/v1/admin/clients/{{managed_client_id}}?hard=true
+  body: none
+  auth: none
+}

@@ -1,0 +1,11 @@
+meta {
+  name: Delete service (hard)
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{base_url}}/v1/admin/services/{{service_id}}?hard=true
+  body: none
+  auth: none
+}

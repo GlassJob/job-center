@@ -1,0 +1,11 @@
+meta {
+  name: List states
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/states?page=1&limit=20
+  body: none
+  auth: none
+}

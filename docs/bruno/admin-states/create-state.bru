@@ -1,0 +1,30 @@
+meta {
+  name: Create state
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/states
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "key": "shop:us_001:incremental",
+    "value": {
+      "cursor": "0",
+      "watermark": null
+    }
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar('state_id', res.body.data.id);
+    if (res.body.data.version != null) {
+      bru.setEnvVar('state_version', String(res.body.data.version));
+    }
+  }
+}

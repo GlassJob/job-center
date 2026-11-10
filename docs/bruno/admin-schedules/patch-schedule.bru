@@ -1,0 +1,31 @@
+meta {
+  name: Patch schedule
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/schedules/{{schedule_id}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "version": 0,
+    "name": "Hourly run (renamed)",
+    "enabled": true,
+    "cron_expression": "0 0 * * * *",
+    "timeout_seconds": 600
+  }
+}
+
+docs {
+  `version` 为 CAS 期望版本；成功后响应 version+1。
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.version != null) {
+    bru.setEnvVar('schedule_version', String(res.body.data.version));
+  }
+}

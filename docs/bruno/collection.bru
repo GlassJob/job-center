@@ -1,0 +1,124 @@
+meta {
+  name: job-center Admin
+}
+
+script:pre-request {
+  function resolve(s) {
+    if (s == null) return '';
+    return String(s).replace(/\{\{\s*([^}]+?)\s*\}\}/g, function (_, key) {
+      var v = bru.getEnvVar(key);
+      if (v === undefined || v === null || v === '') {
+        v = bru.getVar(key);
+      }
+      return v == null ? '' : String(v);
+    });
+  }
+  
+  function rfc3986(s) {
+    return encodeURIComponent(String(s)).replace(/[!'()*]/g, function (c) {
+      return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+    });
+  }
+  
+  // body:json → 先转成确定的 text 字符串，再签名、再写回请求
+  function bodyAsText() {
+    var raw = req.getBody();
+    if (raw === undefined || raw === null || raw === '') {
+      return '';
+    }
+  
+    var text = '';
+    if (typeof raw === 'string') {
+      text = resolve(raw).trim();
+      if (!text) return '';
+      try {
+        text = JSON.stringify(JSON.parse(text));
+      } catch (e) {
+        // 非 JSON 原文
+      }
+    } else if (typeof raw === 'object') {
+      if (Object.keys(raw).length === 0) return '';
+      // 对象里的字符串字段也可能含 {{var}}
+      text = JSON.stringify(raw, function (k, v) {
+        return typeof v === 'string' ? resolve(v) : v;
+      });
+    } else {
+      return '';
+    }
+  
+    // 以 text 形式写回，保证发出去的字节和签名一致
+    req.setBody(text);
+    req.setHeader('Content-Type', 'application/json');
+    return text;
+  }
+  
+  var rawUrl = req.getUrl();
+  var resolved = resolve(rawUrl);
+  if (resolved.indexOf('/health/') >= 0) {
+    return;
+  }
+  
+  var clientId = String(bru.getEnvVar('client_id') || '').trim();
+  var secret = String(bru.getEnvVar('client_secret') || '').trim();
+  var opId = String(bru.getEnvVar('operator_id') || '').trim();
+  var opName = String(bru.getEnvVar('operator_name') || '').trim();
+  if (!clientId || !secret) {
+    throw new Error('Set client_id/client_secret and select environment local');
+  }
+  
+  var CryptoJS = require('crypto-js');
+  var method = String(req.getMethod()).toUpperCase();
+  var noHash = resolved.split('#')[0];
+  var qPos = noHash.indexOf('?');
+  var beforeQuery = qPos >= 0 ? noHash.slice(0, qPos) : noHash;
+  var queryRaw = qPos >= 0 ? noHash.slice(qPos + 1) : '';
+  var m = beforeQuery.match(/^https?:\/\/[^/?#]+(.*)$/i);
+  if (!m) {
+    throw new Error('Bad URL after resolve: ' + resolved);
+  }
+  var path = m[1] || '/';
+  
+  var pairs = [];
+  if (queryRaw) {
+    queryRaw.split('&').forEach(function (part) {
+      if (!part) return;
+      var i = part.indexOf('=');
+      var k = i < 0 ? part : part.slice(0, i);
+      var v = i < 0 ? '' : part.slice(i + 1);
+      try {
+        k = decodeURIComponent(k.replace(/\+/g, ' '));
+        v = decodeURIComponent(v.replace(/\+/g, ' '));
+      } catch (e) {}
+      pairs.push([k, v]);
+    });
+  }
+  pairs.sort(function (a, b) {
+    if (a[0] === b[0]) return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+    return a[0] < b[0] ? -1 : 1;
+  });
+  var query = pairs.map(function (p) {
+    return rfc3986(p[0]) + '=' + rfc3986(p[1]);
+  }).join('&');
+  
+  var body = bodyAsText();
+  var bodyHash = CryptoJS.SHA256(body).toString(CryptoJS.enc.Hex);
+  var ts = String(Math.floor(Date.now() / 1000));
+  var nonce = CryptoJS.lib.WordArray.random(16).toString();
+  var canonical = [method, path, query, clientId, ts, nonce, opId, opName, bodyHash].join('\n');
+  var sig = CryptoJS.HmacSHA256(canonical, secret).toString(CryptoJS.enc.Hex);
+  
+  console.log('jc-sign', method, path, 'body=', body, 'bodyHash=', bodyHash);
+  
+  req.setHeader('X-JC-Client-Id', clientId);
+  req.setHeader('X-JC-Timestamp', ts);
+  req.setHeader('X-JC-Nonce', nonce);
+  req.setHeader('X-JC-Operator-Id', opId);
+  req.setHeader('X-JC-Operator-Name', opName);
+  req.setHeader('X-JC-Signature', sig);
+}
+
+docs {
+  # job-center Admin
+  
+  请求文件用 body:json；collection 预请求里转成 compact text 再签名并 setBody。
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Delete state
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/states/{{state_id}}
+  body: none
+  auth: none
+}
+
+docs {
+  物理删除（job_states 无软删状态）。
+}

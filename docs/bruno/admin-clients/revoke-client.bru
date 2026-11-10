@@ -1,0 +1,11 @@
+meta {
+  name: Revoke client
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/v1/admin/clients/{{managed_client_id}}/revoke
+  body: none
+  auth: none
+}

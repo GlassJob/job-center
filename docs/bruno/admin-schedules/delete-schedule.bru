@@ -1,0 +1,15 @@
+meta {
+  name: Delete schedule
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/schedules/{{schedule_id}}
+  body: none
+  auth: none
+}
+
+docs {
+  默认软关停（enabled=false）。硬删加 `?hard=true`（有 executions 引用时 409）。
+}

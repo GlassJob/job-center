@@ -1,0 +1,17 @@
+meta {
+  name: Rotate client
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/v1/admin/clients/{{managed_client_id}}/rotate
+  body: none
+  auth: none
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.secret) {
+    console.log('rotated secret (save once):', res.body.data.secret);
+  }
+}

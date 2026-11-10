@@ -1,0 +1,11 @@
+meta {
+  name: Get client
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/v1/admin/clients/{{managed_client_id}}
+  body: none
+  auth: none
+}

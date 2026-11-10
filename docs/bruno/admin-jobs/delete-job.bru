@@ -1,0 +1,15 @@
+meta {
+  name: Delete job
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}
+  body: none
+  auth: none
+}
+
+docs {
+  默认软删（DISABLED）。硬删加 query：`?hard=true`。
+}

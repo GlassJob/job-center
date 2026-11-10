@@ -1,0 +1,10 @@
+SET FOREIGN_KEY_CHECKS=0;
+DROP TABLE IF EXISTS `operation_audits`;
+DROP TABLE IF EXISTS `job_states`;
+DROP TABLE IF EXISTS `schedules`;
+DROP TABLE IF EXISTS `job_versions`;
+DROP TABLE IF EXISTS `jobs`;
+DROP TABLE IF EXISTS `service_credentials`;
+DROP TABLE IF EXISTS `services`;
+DROP TABLE IF EXISTS `clients`;
+SET FOREIGN_KEY_CHECKS=1;

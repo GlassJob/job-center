@@ -1,0 +1,23 @@
+node_id: jc-1
+
+http:
+  addr: ":8080"
+
+database:
+  # 示例：job_center:PASSWORD@tcp(127.0.0.1:3306)/job_center?parseTime=true&loc=UTC
+  dsn: ""
+  max_open_conns: 20
+  max_idle_conns: 10
+  conn_max_lifetime: 1h
+
+security:
+  # 必填：用于 secret 哈希与 AES 加密
+  credential_pepper: "change-me-to-a-long-random-string"
+  timestamp_skew_seconds: 300
+  # 仅当 clients 表为空时生效；明文 secret 只打印一次
+  bootstrap_client_secret: ""
+  bootstrap_client_name: bootstrap
+
+log:
+  level: info
+  format: json

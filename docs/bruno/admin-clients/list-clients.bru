@@ -1,0 +1,11 @@
+meta {
+  name: List clients
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/clients?page=1&limit=20
+  body: none
+  auth: none
+}

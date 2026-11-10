@@ -1,0 +1,25 @@
+meta {
+  name: Create service
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/admin/services
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "service_code": "demo.app",
+    "name": "Demo",
+    "description": "from bruno"
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar('service_id', res.body.data.id);
+  }
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Patch state
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/states/{{state_id}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "version": 1,
+    "value": {
+      "cursor": "100",
+      "watermark": "2026-01-01T00:00:00Z"
+    }
+  }
+}
+
+docs {
+  `version` 为 CAS 期望版本（当前值）；成功后响应里 version+1。
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.version != null) {
+    bru.setEnvVar('state_version', String(res.body.data.version));
+  }
+}
