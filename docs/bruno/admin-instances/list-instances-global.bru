@@ -1,0 +1,16 @@
+meta {
+  name: List instances (global)
+  type: http
+  seq: 0
+}
+
+get {
+  url: {{base_url}}/v1/admin/instances?keyword=&service_id=&status=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/instances
+  全局实例列表，含 service_code / service_name。
+}

@@ -23,7 +23,7 @@ func (h *JobHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	list, total, err := h.Jobs.List(c.Request.Context(), serviceID, c.Query("keyword"), c.Query("status"), c.Query("enabled"), page, limit)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrInvalidInput) {
@@ -31,7 +31,34 @@ func (h *JobHandler) List(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list jobs failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询任务失败")
+		return
+	}
+	response.OK(c, gin.H{"list": list, "total": total})
+}
+
+func (h *JobHandler) ListGlobal(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	list, total, err := h.Jobs.ListGlobal(
+		c.Request.Context(),
+		c.Query("service_id"),
+		c.Query("keyword"),
+		c.Query("status"),
+		c.Query("enabled"),
+		page,
+		limit,
+	)
+	if errors.Is(err, service.ErrNotFound) {
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
+		return
+	}
+	if errors.Is(err, service.ErrInvalidInput) {
+		response.Fail(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询任务失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -40,11 +67,11 @@ func (h *JobHandler) List(c *gin.Context) {
 func (h *JobHandler) Get(c *gin.Context) {
 	v, err := h.Jobs.Get(c.Request.Context(), c.Param("serviceId"), c.Param("jobId"))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "job not found")
+		response.Fail(c, http.StatusNotFound, 40400, "任务不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get job failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取任务失败")
 		return
 	}
 	response.OK(c, v)
@@ -54,12 +81,12 @@ func (h *JobHandler) Create(c *gin.Context) {
 	serviceID := c.Param("serviceId")
 	var in service.CreateJobInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	out, err := h.Jobs.Create(c.Request.Context(), serviceID, in)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrInvalidInput) {
@@ -67,11 +94,11 @@ func (h *JobHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "job code already exists")
+		response.Fail(c, http.StatusConflict, 40900, "任务编码已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "create job failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "创建任务失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -94,7 +121,7 @@ func (h *JobHandler) Patch(c *gin.Context) {
 	jobID := c.Param("jobId")
 	var in service.PatchJobInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	before, _ := h.Jobs.Get(c.Request.Context(), serviceID, jobID)
@@ -104,11 +131,11 @@ func (h *JobHandler) Patch(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "job not found")
+		response.Fail(c, http.StatusNotFound, 40400, "任务不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "patch job failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "更新任务失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -134,7 +161,7 @@ func (h *JobHandler) Delete(c *gin.Context) {
 	before, _ := h.Jobs.Get(c.Request.Context(), serviceID, jobID)
 	out, err := h.Jobs.Delete(c.Request.Context(), serviceID, jobID, hard)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "job not found")
+		response.Fail(c, http.StatusNotFound, 40400, "任务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
@@ -142,7 +169,7 @@ func (h *JobHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "delete job failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "删除任务失败")
 		return
 	}
 	action := "job.disable"

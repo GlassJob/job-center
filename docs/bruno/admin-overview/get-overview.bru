@@ -1,0 +1,16 @@
+meta {
+  name: Get overview
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/overview
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/overview
+  服务/任务计数、实例状态分布、今日执行统计、upcoming、recent_failed。
+}

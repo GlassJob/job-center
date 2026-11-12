@@ -28,6 +28,19 @@ websocket:
   heartbeat_interval: 10s
   lease_ttl: 30s
 
+scheduler:
+  enabled: true
+  generate_interval: 24h
+  claim_lead: 1s       # 提前醒（早到上班）；有 PENDING 时睡到 fire_at-lead
+  # 无 PENDING 时 Claim 只等 WakeClaim（Generate/排班变更），不再定时扫库
+  claim_max_idle: 5s   # 已废弃（兼容保留）
+  claim_interval: 5s   # 兼容旧字段
+  queue_interval: 2s
+  horizon: 168h # 7d；新建/改 cron 会立刻预生成
+  claim_batch: 50
+  queue_batch: 50
+  claim_ttl: 30s
+
 log:
   level: info
   format: json

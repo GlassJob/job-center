@@ -35,7 +35,7 @@ func (h *AuditHandler) List(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list audits failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询审计失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -48,11 +48,11 @@ func (h *AuditHandler) Get(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "audit not found")
+		response.Fail(c, http.StatusNotFound, 40400, "审计记录不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get audit failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取审计失败")
 		return
 	}
 	response.OK(c, v)

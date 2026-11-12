@@ -3,19 +3,12 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/GlassJob/job-center/internal/model"
 	"github.com/GlassJob/job-center/internal/pkg/idgen"
 	"github.com/GlassJob/job-center/internal/repository/mysql"
-)
-
-var (
-	ErrInvalidInput = errors.New("invalid input")
-	ErrNotFound     = errors.New("not found")
-	ErrConflict     = errors.New("conflict")
 )
 
 var serviceCodeRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,63}$`)
@@ -38,13 +31,13 @@ func (s *Services) CreateService(ctx context.Context, in CreateServiceInput) (*m
 	code := strings.TrimSpace(in.Code)
 	name := strings.TrimSpace(in.Name)
 	if !serviceCodeRe.MatchString(code) {
-		return nil, fmt.Errorf("%w: code", ErrInvalidInput)
+		return nil, Invalidf("编码")
 	}
 	if name == "" || len(name) > 128 {
-		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+		return nil, Invalidf("名称")
 	}
 	if len(in.Description) > 1000 {
-		return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+		return nil, Invalidf("描述")
 	}
 	svc := &model.Service{
 		ID:          idgen.New(),
@@ -70,7 +63,7 @@ func (s *Services) GetService(ctx context.Context, id string) (*model.ServiceDet
 	return d, err
 }
 
-func (s *Services) ListServices(ctx context.Context, keyword string, page, limit int) ([]model.Service, int64, error) {
+func (s *Services) ListServices(ctx context.Context, keyword string, page, limit int) ([]model.ServiceDetail, int64, error) {
 	return s.store.ListServices(ctx, keyword, page, limit)
 }
 
@@ -85,21 +78,21 @@ func (s *Services) PatchService(ctx context.Context, id string, in PatchServiceI
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" || len(n) > 128 {
-			return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+			return nil, Invalidf("名称")
 		}
 		p.Name = &n
 	}
 	if in.Description != nil {
 		d := strings.TrimSpace(*in.Description)
 		if len(d) > 1000 {
-			return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+			return nil, Invalidf("描述")
 		}
 		p.Description = &d
 	}
 	if in.Status != nil {
 		st := strings.TrimSpace(*in.Status)
 		if st != model.ServiceStatusActive && st != model.ServiceStatusDisabled {
-			return nil, fmt.Errorf("%w: status", ErrInvalidInput)
+			return nil, Invalidf("状态")
 		}
 		p.Status = &st
 	}
@@ -143,8 +136,8 @@ func (s *Services) DeleteService(ctx context.Context, id string, hard bool) (*De
 		return nil, err
 	}
 	if jobs+instances+credentials+deployments > 0 {
-		return nil, fmt.Errorf("%w: service still has dependents (jobs=%d credentials=%d instances=%d deployments=%d)",
-			ErrConflict, jobs, credentials, instances, deployments)
+		return nil, Conflictf("服务仍有依赖资源（jobs=%d credentials=%d instances=%d deployments=%d）",
+			jobs, credentials, instances, deployments)
 	}
 	if err := s.store.DeleteService(ctx, id); err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {

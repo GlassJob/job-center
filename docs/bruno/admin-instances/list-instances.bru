@@ -1,0 +1,16 @@
+meta {
+  name: List instances
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/instances?page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  查询服务下执行器实例。可选 query：`status`（ONLINE|OFFLINE|DRAINING|…）、`keyword`（id/instance_key/hostname/ip）。
+  权限：`job.instance.view`（bootstrap `*` 可用）。
+}

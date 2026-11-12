@@ -1,4 +1,14 @@
 SET FOREIGN_KEY_CHECKS=0;
+DROP TABLE IF EXISTS `schedule_triggers`;
+DROP TABLE IF EXISTS `archive_runs`;
+DROP TABLE IF EXISTS `execution_logs`;
+DROP TABLE IF EXISTS `node_leases`;
+DROP TABLE IF EXISTS `execution_events`;
+DROP TABLE IF EXISTS `execution_attempts`;
+DROP TABLE IF EXISTS `executions`;
+DROP TABLE IF EXISTS `deployments`;
+DROP TABLE IF EXISTS `instance_jobs`;
+DROP TABLE IF EXISTS `instances`;
 DROP TABLE IF EXISTS `operation_audits`;
 DROP TABLE IF EXISTS `job_states`;
 DROP TABLE IF EXISTS `schedules`;

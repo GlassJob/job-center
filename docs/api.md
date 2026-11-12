@@ -7,7 +7,8 @@
 | Health | `GET /health/live` · `GET /health/ready` | 可用 |
 | Admin HTTP | `/v1/admin/*` | Phase A 可用 |
 | Executor **WS 1.1** | `GET /v1/executor/ws` | **主路径**，见 [protocol-websocket-v1.1.md](./protocol-websocket-v1.1.md) |
-| Admin executions | `POST|GET .../executions` · `POST .../cancel` | 手动触发 / 查询 / 取消 |
+| Admin executions | `GET /executions` · `GET|POST .../jobs/:id/executions` · `GET .../logs` · `POST .../cancel` | 列表 / 触发 / 详情 / 日志 / 取消 |
+| Admin overview / jobs / instances | `GET /overview` · `GET /jobs` · `GET /instances` | 概览 · 全局任务 · 全局实例 |
 | Go SDK | 仓库根目录 `job-executor-go/` | 协议 1.1 + cancel |
 
 冒烟：`scripts/ws_smoke.py`。
@@ -72,6 +73,41 @@ Rotate 会重新生成 `secret`/`secret_enc`/`secret_hash`；旧行无 `secret_e
 
 ---
 
+## Admin：执行器实例（只读）
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| GET | `/v1/admin/instances` | `job.instance.view` |
+| GET | `/v1/admin/services/:serviceId/instances` | `job.instance.view` |
+| GET | `/v1/admin/services/:serviceId/instances/:instanceId` | `job.instance.view` |
+
+List query：`page` / `limit` / `status`（`ONLINE`\|`OFFLINE`\|`DRAINING`\|`SUSPECT`\|`REGISTERING`）/ `keyword`（匹配 id、instance_key、hostname、ip）/ 全局列表另支持 `service_id`。
+
+响应字段要点：`instance_key`、`status`、`running_count` / `max_concurrency`、`last_heartbeat_at`、`jobs[]`（`job_id` / `job_code` / `handler_version`）；全局列表含 `service_code` / `service_name`。  
+实例由 Executor WS 自注册，本轮不提供创建/踢线等写接口。
+
+---
+
+## Admin：全局任务 / 概览 / 服务列表
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| GET | `/v1/admin/jobs` | `job.job.view` |
+| GET | `/v1/admin/overview` | `job.service.view` |
+| GET | `/v1/admin/scheduler` | `job.schedule.view` |
+| POST | `/v1/admin/scheduler/regenerate` | `job.schedule.manage` |
+| GET | `/v1/admin/triggers` | `job.schedule.view` |
+| GET | `/v1/admin/services` | `job.service.view` |
+
+- `GET /jobs` query：`keyword` / `service_id` / `status` / `enabled` / `page` / `limit`。列表项在 `JobView` 上含 `service_code`/`service_name`、`schedules[]` 摘要、`last_execution_id/status/at`。
+- `GET /overview`：`service_count` / `job_count` / `enabled_job_count` / `instance_counts` / `execution_today` / `upcoming[]` / `recent_failed[]`。
+- `GET /scheduler`：三循环工作状态 `claim` / `generate` / `queued`（`phase`：`IDLE`\|`RUNNING`\|`SLEEPING`\|`DISABLED`\|`STOPPED`，含 `detail` / 最近起止时间）。当前无 Prometheus metrics。
+- `POST /scheduler/regenerate`：全平台 enabled+cron 排班**先删再插**（同步），返回 `total` / `succeeded` / `failed` / `errors[]`。
+- `GET /triggers` query：`schedule_id` / `job_id` / `service_id` / `status` / `fire_from` / `fire_to` / `page` / `limit`。默认按 `fire_at ASC`；列表项含 schedule/job/service 摘要。
+- `GET /services` 每条直接带 `job_count` / `instance_count` / `online_instance_count` / `credential_count`（与详情一致）。
+
+---
+
 ## Executor WebSocket（主路径）
 
 详见 **[protocol-websocket-v1.1.md](./protocol-websocket-v1.1.md)**。
@@ -90,9 +126,17 @@ Rotate 会重新生成 `secret`/`secret_enc`/`secret_hash`；旧行无 `secret_e
 
 | 方法 | 路径 | 权限 |
 |------|------|------|
+| GET | `/v1/admin/executions` | `job.job.view` |
+| GET | `/v1/admin/services/:serviceId/jobs/:jobId/executions` | `job.job.view` |
 | POST | `/v1/admin/services/:serviceId/jobs/:jobId/executions` | `job.job.manage` |
 | GET | `/v1/admin/services/:serviceId/jobs/:jobId/executions/:executionId` | `job.job.view` |
+| GET | `/v1/admin/services/:serviceId/jobs/:jobId/executions/:executionId/logs` | `job.job.view` |
 | POST | `/v1/admin/services/:serviceId/jobs/:jobId/executions/:executionId/cancel` | `job.job.manage` |
+
+执行列表 query：`keyword` / `service_id` / `job_id` / `status` / `instance_id` / `created_from` / `created_to` / `page` / `limit`。  
+列表项在 `ExecutionView` 上含 `job_name` / `service_code` / `service_name`（列表省略大体量 `params`/`result`）。  
+日志 query：`after`（sequence 游标）/ `limit` / `attempt_id`；Executor `task.log` 写入 `execution_logs`。  
+执行详情中的 `attempt` 含日志统计：物理列 `log_{info,warn,error}_{collected,dropped}`；虚拟列 `log_warn_count` / `log_error_count`（= collected + dropped）。
 
 Create body：
 
@@ -104,8 +148,30 @@ Create body：
 }
 ```
 
-响应：`execution_id` / `status`（`DISPATCHING` 或 `QUEUED`）/ `attempt_id` / `instance_id`。  
-有 ONLINE 且已 register 该 job、有容量的实例时同步下发 `task.execute`；否则 `QUEUED`（本轮无后台扫队）。
+响应：`execution_id` / `status`（`DISPATCHING` / `QUEUED` / `FAILED`）/ `attempt_id` / `instance_id`。  
+有 ONLINE 且已 register 该 job、有容量的实例时同步下发 `task.execute`；有 ONLINE 但暂无空位 → `QUEUED`（QueuedScanner 补派）；**无 ONLINE** → 直接 `FAILED`（`NO_ONLINE_INSTANCE`）。
+
+### Scheduler / Triggers
+
+配置项 `scheduler.*`（默认开启）：`generate_interval=24h` / `horizon=168h`（7 天）/ `claim_lead=1s` / `queue_interval` / `claim_batch` / `queue_batch`。
+
+| 循环 | 行为 |
+|------|------|
+| Generate | 日扫：**增量**从 `horizon_at`（或 now）补到 `now+horizon`；Create/改 cron·时区/启用/手动 regenerate 走**先删再插** |
+| Claim | 有 PENDING：睡到最早 `fire_at`（提前 `claim_lead`）；无 PENDING：只等 `WakeClaim`（不扫库）；due 时 `SKIP LOCKED` → `CronTrigger` |
+| QueuedScanner | 扫 `executions.status=QUEUED`，有容量则 `dispatch` |
+
+单排班触点：
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| GET | `/v1/admin/services/:serviceId/jobs/:jobId/schedules/:scheduleId/triggers` | `job.schedule.view` |
+| POST | `/v1/admin/services/:serviceId/jobs/:jobId/schedules/:scheduleId/regenerate` | `job.schedule.manage` |
+
+- 单排班 triggers query 同全局（无 `schedule_id`/`job_id`/`service_id`，由路径固定）。
+- `POST .../regenerate`：该排班先删再插；未启用/无 cron → 400。
+
+手工验收：启 cron schedule → triggers 立刻出现 → 到期建 execution；无 ONLINE 手动触发 → FAILED；有 ONLINE 打满并发 → QUEUED → 腾空位后被扫走；`POST /scheduler/regenerate` 后近端 PENDING 重新对齐。
 
 Cancel body 可选：`{ "reason": "..." }`。
 
@@ -130,4 +196,12 @@ websocket:
   send_queue_size: 64
   heartbeat_interval: 10s
   lease_ttl: 30s
+scheduler:
+  enabled: true
+  generate_interval: 24h
+  claim_lead: 1s
+  queue_interval: 2s
+  horizon: 168h
+  claim_batch: 50
+  queue_batch: 50
 ```

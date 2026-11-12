@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GlassJob/job-center/internal/model"
 	"github.com/GlassJob/job-center/internal/pkg/idgen"
@@ -16,12 +16,23 @@ import (
 
 var scheduleCodeRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// HorizonGenerator 由 scheduler 实现：对单个 schedule 立即预生成 triggers，并唤醒 Claim。
+type HorizonGenerator interface {
+	GenerateForSchedule(ctx context.Context, scheduleID string) error
+	WakeClaim()
+}
+
 type Schedules struct {
 	store *mysql.Store
+	gen   HorizonGenerator
 }
 
 func NewSchedules(store *mysql.Store) *Schedules {
 	return &Schedules{store: store}
+}
+
+func (s *Schedules) SetHorizonGenerator(g HorizonGenerator) {
+	s.gen = g
 }
 
 type CreateScheduleInput struct {
@@ -71,7 +82,7 @@ type PatchScheduleInput struct {
 func (s *Schedules) ensureJob(ctx context.Context, serviceID, jobID string) error {
 	_, err := s.store.GetJob(ctx, serviceID, jobID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: job", ErrNotFound)
+		return NotFoundf("任务")
 	}
 	return err
 }
@@ -81,10 +92,10 @@ func validateJSONObject(name string, v *map[string]any, allowNil bool) error {
 		if allowNil {
 			return nil
 		}
-		return fmt.Errorf("%w: %s", ErrInvalidInput, name)
+		return Invalidf("%s", name)
 	}
 	if _, err := json.Marshal(*v); err != nil {
-		return fmt.Errorf("%w: %s", ErrInvalidInput, name)
+		return Invalidf("%s", name)
 	}
 	return nil
 }
@@ -93,22 +104,22 @@ func validateScheduleEnums(policy, scope, misfire, dispatch string) error {
 	switch policy {
 	case "", model.ConcurrencyAllow, model.ConcurrencyForbid, model.ConcurrencyQueue:
 	default:
-		return fmt.Errorf("%w: concurrency_policy", ErrInvalidInput)
+		return Invalidf("并发策略")
 	}
 	switch scope {
 	case "", model.ConcurrencyScopeJob, model.ConcurrencyScopeSchedule, model.ConcurrencyScopeIdempotencyKey:
 	default:
-		return fmt.Errorf("%w: concurrency_scope", ErrInvalidInput)
+		return Invalidf("并发范围")
 	}
 	switch misfire {
 	case "", model.MisfireSkip, model.MisfireFireOnce, model.MisfireCatchUp:
 	default:
-		return fmt.Errorf("%w: misfire_policy", ErrInvalidInput)
+		return Invalidf("错过策略")
 	}
 	switch dispatch {
 	case "", model.DispatchLeastLoad, model.DispatchRoundRobin, model.DispatchRandom:
 	default:
-		return fmt.Errorf("%w: dispatch_strategy", ErrInvalidInput)
+		return Invalidf("派发策略")
 	}
 	return nil
 }
@@ -121,7 +132,7 @@ func (s *Schedules) List(ctx context.Context, serviceID, jobID, keyword, enabled
 	if strings.TrimSpace(enabledRaw) != "" {
 		v, err := strconv.ParseBool(strings.TrimSpace(enabledRaw))
 		if err != nil {
-			return nil, 0, fmt.Errorf("%w: enabled", ErrInvalidInput)
+			return nil, 0, Invalidf("enabled 参数")
 		}
 		enabled = &v
 	}
@@ -158,10 +169,10 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 	code := strings.TrimSpace(in.Code)
 	name := strings.TrimSpace(in.Name)
 	if !scheduleCodeRe.MatchString(code) {
-		return nil, fmt.Errorf("%w: code", ErrInvalidInput)
+		return nil, Invalidf("编码")
 	}
 	if name == "" || len(name) > 128 {
-		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+		return nil, Invalidf("名称")
 	}
 	enabled := false
 	if in.Enabled != nil {
@@ -176,19 +187,19 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 		cron = strings.TrimSpace(*in.CronExpression)
 	}
 	if enabled && cron == "" {
-		return nil, fmt.Errorf("%w: cron_expression required when enabled", ErrInvalidInput)
+		return nil, Invalidf("启用时必须填写 Cron 表达式")
 	}
 	tz := "UTC"
 	if in.Timezone != nil {
 		tz = strings.TrimSpace(*in.Timezone)
 		if tz == "" || len(tz) > 64 {
-			return nil, fmt.Errorf("%w: timezone", ErrInvalidInput)
+			return nil, Invalidf("时区")
 		}
 	}
-	if err := validateJSONObject("default_params", in.DefaultParams, true); err != nil {
+	if err := validateJSONObject("默认参数", in.DefaultParams, true); err != nil {
 		return nil, err
 	}
-	if err := validateJSONObject("retry_backoff", in.RetryBackoff, true); err != nil {
+	if err := validateJSONObject("重试退避", in.RetryBackoff, true); err != nil {
 		return nil, err
 	}
 	policy, scope, misfire, dispatch := "", "", "", ""
@@ -211,7 +222,7 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 	if in.TimeoutSeconds != nil {
 		timeout = *in.TimeoutSeconds
 		if timeout < 1 || timeout > 604800 {
-			return nil, fmt.Errorf("%w: timeout_seconds", ErrInvalidInput)
+			return nil, Invalidf("超时秒数")
 		}
 	}
 	var maxRetries uint
@@ -222,7 +233,7 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 	if in.MaxConcurrency != nil {
 		maxConc = *in.MaxConcurrency
 		if maxConc < 1 {
-			return nil, fmt.Errorf("%w: max_concurrency", ErrInvalidInput)
+			return nil, Invalidf("最大并发")
 		}
 	}
 	queueMax := uint(10)
@@ -237,7 +248,7 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 	if in.CatchUpMax != nil {
 		catchUp = *in.CatchUpMax
 		if catchUp < 1 || catchUp > 100 {
-			return nil, fmt.Errorf("%w: catch_up_max", ErrInvalidInput)
+			return nil, Invalidf("追赶上限")
 		}
 	}
 	taken, err := s.store.ExistsScheduleCode(ctx, jobID, code, "")
@@ -245,7 +256,7 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 		return nil, err
 	}
 	if taken {
-		return nil, fmt.Errorf("%w: code already exists", ErrConflict)
+		return nil, Conflictf("编码已存在")
 	}
 	if updatedBy == "" {
 		updatedBy = "admin"
@@ -293,6 +304,7 @@ func (s *Schedules) Create(ctx context.Context, serviceID, jobID string, in Crea
 	if err != nil {
 		return nil, err
 	}
+	s.requestGenerate(ctx, got)
 	v := got.View()
 	return &v, nil
 }
@@ -309,7 +321,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		return nil, err
 	}
 	if in.Version == nil {
-		return nil, fmt.Errorf("%w: version required for CAS", ErrInvalidInput)
+		return nil, Invalidf("缺少 version（乐观锁）")
 	}
 	cur, err := s.store.GetSchedule(ctx, jobID, id)
 	if errors.Is(err, mysql.ErrNotFound) {
@@ -324,7 +336,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" || len(n) > 128 {
-			return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+			return nil, Invalidf("名称")
 		}
 		p.Name = &n
 		changed = true
@@ -348,7 +360,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 	if in.Timezone != nil {
 		tz := strings.TrimSpace(*in.Timezone)
 		if tz == "" || len(tz) > 64 {
-			return nil, fmt.Errorf("%w: timezone", ErrInvalidInput)
+			return nil, Invalidf("时区")
 		}
 		p.Timezone = &tz
 		changed = true
@@ -357,7 +369,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		p.ClearDefaultParams = true
 		changed = true
 	} else if in.DefaultParams != nil {
-		if err := validateJSONObject("default_params", in.DefaultParams, false); err != nil {
+		if err := validateJSONObject("默认参数", in.DefaultParams, false); err != nil {
 			return nil, err
 		}
 		p.DefaultParams = in.DefaultParams
@@ -366,7 +378,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 	if in.TimeoutSeconds != nil {
 		t := *in.TimeoutSeconds
 		if t < 1 || t > 604800 {
-			return nil, fmt.Errorf("%w: timeout_seconds", ErrInvalidInput)
+			return nil, Invalidf("超时秒数")
 		}
 		p.TimeoutSeconds = &t
 		changed = true
@@ -376,7 +388,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		changed = true
 	}
 	if in.RetryBackoff != nil {
-		if err := validateJSONObject("retry_backoff", in.RetryBackoff, false); err != nil {
+		if err := validateJSONObject("重试退避", in.RetryBackoff, false); err != nil {
 			return nil, err
 		}
 		p.RetryBackoff = in.RetryBackoff
@@ -408,7 +420,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 	}
 	if in.MaxConcurrency != nil {
 		if *in.MaxConcurrency < 1 {
-			return nil, fmt.Errorf("%w: max_concurrency", ErrInvalidInput)
+			return nil, Invalidf("最大并发")
 		}
 		p.MaxConcurrency = in.MaxConcurrency
 		changed = true
@@ -423,7 +435,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 	}
 	if in.CatchUpMax != nil {
 		if *in.CatchUpMax < 1 || *in.CatchUpMax > 100 {
-			return nil, fmt.Errorf("%w: catch_up_max", ErrInvalidInput)
+			return nil, Invalidf("追赶上限")
 		}
 		p.CatchUpMax = in.CatchUpMax
 		changed = true
@@ -445,7 +457,7 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		willCron = *p.CronExpression
 	}
 	if willEnable && strings.TrimSpace(willCron) == "" {
-		return nil, fmt.Errorf("%w: cron_expression required when enabled", ErrInvalidInput)
+		return nil, Invalidf("启用时必须填写 Cron 表达式")
 	}
 	if updatedBy == "" {
 		p.UpdatedBy = "admin"
@@ -456,13 +468,152 @@ func (s *Schedules) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		return nil, ErrNotFound
 	}
 	if errors.Is(err, mysql.ErrConflict) {
-		return nil, fmt.Errorf("%w: version mismatch", ErrConflict)
+		return nil, Conflictf("版本冲突，请刷新后重试")
 	}
 	if err != nil {
 		return nil, err
 	}
+
+	// cron/timezone/禁用变化时作废未来 triggers，清空 horizon 以便重生。
+	redefined := p.ClearCron || p.CronExpression != nil || p.Timezone != nil
+	disabled := p.Enabled != nil && !*p.Enabled
+	enabledOn := p.Enabled != nil && *p.Enabled
+	if redefined || disabled {
+		s.invalidateFutureTriggers(ctx, id, "SCHEDULE_UPDATED")
+	}
+	if !disabled && (redefined || enabledOn) {
+		s.requestGenerate(ctx, sch)
+	}
+
 	v := sch.View()
 	return &v, nil
+}
+
+func (s *Schedules) invalidateFutureTriggers(ctx context.Context, scheduleID, _ string) {
+	now := time.Now().UTC()
+	// 先删 now 之后的 PENDING（及占唯一键的 CLAIMED/CANCELLED），再由 Generate 插入。
+	_, _ = s.store.DeleteFuturePendingTriggers(ctx, scheduleID, now)
+	_ = s.store.ClearScheduleHorizon(ctx, scheduleID)
+	if s.gen != nil {
+		s.gen.WakeClaim()
+	}
+}
+
+func (s *Schedules) requestGenerate(ctx context.Context, sch *model.Schedule) {
+	if s.gen == nil || sch == nil {
+		return
+	}
+	if !sch.Enabled || strings.TrimSpace(sch.CronExpression) == "" {
+		return
+	}
+	_ = s.gen.GenerateForSchedule(ctx, sch.ID)
+}
+
+func validTriggerStatus(status string) bool {
+	switch status {
+	case "", model.TriggerPending, model.TriggerClaimed, model.TriggerFired, model.TriggerSkipped, model.TriggerCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Schedules) ListTriggers(
+	ctx context.Context,
+	scheduleID, jobID, serviceID, status, fireFrom, fireTo string,
+	page, limit int,
+) ([]model.ScheduleTriggerView, int64, error) {
+	status = strings.TrimSpace(status)
+	if !validTriggerStatus(status) {
+		return nil, 0, Invalidf("状态")
+	}
+	from, err := parseOptionalTime("fire_from", fireFrom)
+	if err != nil {
+		return nil, 0, err
+	}
+	to, err := parseOptionalTime("fire_to", fireTo)
+	if err != nil {
+		return nil, 0, err
+	}
+	if from != nil && to != nil && !from.Before(*to) {
+		return nil, 0, Invalidf("开始时间必须早于结束时间")
+	}
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		if _, err := s.store.GetService(ctx, sid); errors.Is(err, mysql.ErrNotFound) {
+			return nil, 0, NotFoundf("服务")
+		} else if err != nil {
+			return nil, 0, err
+		}
+	}
+	if jid := strings.TrimSpace(jobID); jid != "" {
+		if _, err := s.store.GetJobByID(ctx, jid); errors.Is(err, mysql.ErrNotFound) {
+			return nil, 0, NotFoundf("任务")
+		} else if err != nil {
+			return nil, 0, err
+		}
+	}
+	if schID := strings.TrimSpace(scheduleID); schID != "" {
+		if _, err := s.store.GetScheduleByID(ctx, schID); errors.Is(err, mysql.ErrNotFound) {
+			return nil, 0, NotFoundf("调度")
+		} else if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	rows, total, err := s.store.ListTriggers(ctx, mysql.ListTriggersFilter{
+		ScheduleID: scheduleID,
+		JobID:      jobID,
+		ServiceID:  serviceID,
+		Status:     status,
+		FireFrom:   from,
+		FireTo:     to,
+		Page:       page,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]model.ScheduleTriggerView, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].View())
+	}
+	return out, total, nil
+}
+
+func (s *Schedules) ListTriggersBySchedule(
+	ctx context.Context,
+	serviceID, jobID, scheduleID, status, fireFrom, fireTo string,
+	page, limit int,
+) ([]model.ScheduleTriggerView, int64, error) {
+	if _, err := s.Get(ctx, serviceID, jobID, scheduleID); err != nil {
+		return nil, 0, err
+	}
+	return s.ListTriggers(ctx, scheduleID, "", "", status, fireFrom, fireTo, page, limit)
+}
+
+type RegenerateScheduleResult struct {
+	ScheduleID string `json:"schedule_id"`
+	OK         bool   `json:"ok"`
+}
+
+func (s *Schedules) Regenerate(ctx context.Context, serviceID, jobID, scheduleID string) (*RegenerateScheduleResult, error) {
+	schView, err := s.Get(ctx, serviceID, jobID, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	if !schView.Enabled {
+		return nil, Invalidf("调度未启用")
+	}
+	if strings.TrimSpace(schView.CronExpression) == "" {
+		return nil, Invalidf("调度未配置 Cron")
+	}
+	if s.gen == nil {
+		return nil, Invalidf("调度器未启用")
+	}
+	if err := s.gen.GenerateForSchedule(ctx, scheduleID); err != nil {
+		return nil, err
+	}
+	return &RegenerateScheduleResult{ScheduleID: scheduleID, OK: true}, nil
 }
 
 type DeleteScheduleResult struct {
@@ -494,11 +645,12 @@ func (s *Schedules) Delete(ctx context.Context, serviceID, jobID, id, updatedBy 
 			return nil, ErrNotFound
 		}
 		if errors.Is(err, mysql.ErrConflict) {
-			return nil, fmt.Errorf("%w: version mismatch", ErrConflict)
+			return nil, Conflictf("版本冲突，请刷新后重试")
 		}
 		if err != nil {
 			return nil, err
 		}
+		s.invalidateFutureTriggers(ctx, id, "SCHEDULE_DISABLED")
 		v := sch.View()
 		return &DeleteScheduleResult{Hard: false, Schedule: &v}, nil
 	}
@@ -507,8 +659,9 @@ func (s *Schedules) Delete(ctx context.Context, serviceID, jobID, id, updatedBy 
 		return nil, err
 	}
 	if n > 0 {
-		return nil, fmt.Errorf("%w: schedule still has dependents (executions=%d)", ErrConflict, n)
+		return nil, Conflictf("调度仍有依赖的执行记录（executions=%d）", n)
 	}
+	_, _ = s.store.CancelAllOpenTriggers(ctx, id, "SCHEDULE_DELETED")
 	if err := s.store.DeleteSchedule(ctx, jobID, id); err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {
 			return nil, ErrNotFound

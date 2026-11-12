@@ -120,6 +120,14 @@ type Attempt struct {
 	ErrorDetail       string          `gorm:"column:error_detail"`
 	Result            json.RawMessage `gorm:"column:result;type:json"`
 	LastLogSeq        uint64          `gorm:"column:last_log_seq"`
+	LogInfoCollected  uint            `gorm:"column:log_info_collected"`
+	LogWarnCollected  uint            `gorm:"column:log_warn_collected"`
+	LogErrorCollected uint            `gorm:"column:log_error_collected"`
+	LogInfoDropped    uint            `gorm:"column:log_info_dropped"`
+	LogWarnDropped    uint            `gorm:"column:log_warn_dropped"`
+	LogErrorDropped   uint            `gorm:"column:log_error_dropped"`
+	LogWarnCount      uint            `gorm:"column:log_warn_count;->"`  // GENERATED
+	LogErrorCount     uint            `gorm:"column:log_error_count;->"` // GENERATED
 	LostAt            *time.Time      `gorm:"column:lost_at"`
 	Version           uint            `gorm:"column:version"`
 	CreatedAt         time.Time       `gorm:"column:created_at"`
@@ -131,8 +139,11 @@ func (Attempt) TableName() string { return "execution_attempts" }
 type ExecutionView struct {
 	ID               string          `json:"id"`
 	ServiceID        string          `json:"service_id"`
+	ServiceCode      string          `json:"service_code,omitempty"`
+	ServiceName      string          `json:"service_name,omitempty"`
 	JobID            string          `json:"job_id"`
 	JobCode          string          `json:"job_code"`
+	JobName          string          `json:"job_name,omitempty"`
 	TriggerType      string          `json:"trigger_type"`
 	TriggeredBy      string          `json:"triggered_by"`
 	Params           json.RawMessage `json:"params,omitempty"`
@@ -156,25 +167,75 @@ type ExecutionView struct {
 	Attempt          *AttemptView    `json:"attempt,omitempty"`
 }
 
+// ExecutionLog 对应 execution_logs 热表。
+type ExecutionLog struct {
+	ID          uint64          `gorm:"column:id;primaryKey" json:"id"`
+	ExecutionID string          `gorm:"column:execution_id" json:"execution_id"`
+	AttemptID   string          `gorm:"column:attempt_id" json:"attempt_id"`
+	Sequence    uint64          `gorm:"column:sequence" json:"sequence"`
+	Level       string          `gorm:"column:level" json:"level"`
+	Stream      *string         `gorm:"column:stream" json:"stream,omitempty"`
+	Message     string          `gorm:"column:message" json:"message"`
+	Fields      json.RawMessage `gorm:"column:fields;type:json" json:"fields,omitempty"`
+	Truncated   bool            `gorm:"column:truncated" json:"truncated"`
+	LoggedAt    time.Time       `gorm:"column:logged_at" json:"logged_at"`
+	CreatedAt   time.Time       `gorm:"column:created_at" json:"created_at"`
+}
+
+func (ExecutionLog) TableName() string { return "execution_logs" }
+
+type ExecutionLogView struct {
+	ID        uint64          `json:"id"`
+	AttemptID string          `json:"attempt_id"`
+	Sequence  uint64          `json:"sequence"`
+	Level     string          `json:"level"`
+	Stream    string          `json:"stream,omitempty"`
+	Message   string          `json:"message"`
+	Fields    json.RawMessage `json:"fields,omitempty"`
+	Truncated bool            `json:"truncated,omitempty"`
+	LoggedAt  time.Time       `json:"logged_at"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+func (l *ExecutionLog) View() ExecutionLogView {
+	stream := ""
+	if l.Stream != nil {
+		stream = *l.Stream
+	}
+	return ExecutionLogView{
+		ID: l.ID, AttemptID: l.AttemptID, Sequence: l.Sequence, Level: l.Level,
+		Stream: stream, Message: l.Message, Fields: l.Fields, Truncated: l.Truncated,
+		LoggedAt: l.LoggedAt, CreatedAt: l.CreatedAt,
+	}
+}
+
 type AttemptView struct {
-	ID             string          `json:"id"`
-	AttemptNo      uint            `json:"attempt_no"`
-	InstanceID     *string         `json:"instance_id,omitempty"`
-	InstanceKey    string          `json:"instance_key,omitempty"`
-	Status         string          `json:"status"`
-	StatusReason   string          `json:"status_reason,omitempty"`
-	HandlerVersion string          `json:"handler_version,omitempty"`
-	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
-	DispatchedAt   *time.Time      `json:"dispatched_at,omitempty"`
-	AckedAt        *time.Time      `json:"acked_at,omitempty"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
-	ProgressPercent *float64       `json:"progress_percent,omitempty"`
-	ProgressMessage string         `json:"progress_message,omitempty"`
-	CancelState    string          `json:"cancel_state,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	ErrorCode      string          `json:"error_code,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
+	ID                string          `json:"id"`
+	AttemptNo         uint            `json:"attempt_no"`
+	InstanceID        *string         `json:"instance_id,omitempty"`
+	InstanceKey       string          `json:"instance_key,omitempty"`
+	Status            string          `json:"status"`
+	StatusReason      string          `json:"status_reason,omitempty"`
+	HandlerVersion    string          `json:"handler_version,omitempty"`
+	LeaseExpiresAt    *time.Time      `json:"lease_expires_at,omitempty"`
+	DispatchedAt      *time.Time      `json:"dispatched_at,omitempty"`
+	AckedAt           *time.Time      `json:"acked_at,omitempty"`
+	StartedAt         *time.Time      `json:"started_at,omitempty"`
+	FinishedAt        *time.Time      `json:"finished_at,omitempty"`
+	ProgressPercent   *float64        `json:"progress_percent,omitempty"`
+	ProgressMessage   string          `json:"progress_message,omitempty"`
+	CancelState       string          `json:"cancel_state,omitempty"`
+	Result            json.RawMessage `json:"result,omitempty"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	ErrorMessage      string          `json:"error_message,omitempty"`
+	LogInfoCollected  uint            `json:"log_info_collected"`
+	LogWarnCollected  uint            `json:"log_warn_collected"`
+	LogErrorCollected uint            `json:"log_error_collected"`
+	LogInfoDropped    uint            `json:"log_info_dropped"`
+	LogWarnDropped    uint            `json:"log_warn_dropped"`
+	LogErrorDropped   uint            `json:"log_error_dropped"`
+	LogWarnCount      uint            `json:"log_warn_count"`
+	LogErrorCount     uint            `json:"log_error_count"`
 }
 
 func (e *Execution) View(a *Attempt) ExecutionView {
@@ -197,6 +258,9 @@ func (e *Execution) View(a *Attempt) ExecutionView {
 			ProgressPercent: a.ProgressPercent, ProgressMessage: a.ProgressMessage,
 			CancelState: a.CancelState,
 			Result: a.Result, ErrorCode: a.ErrorCode, ErrorMessage: a.ErrorMessage,
+			LogInfoCollected: a.LogInfoCollected, LogWarnCollected: a.LogWarnCollected, LogErrorCollected: a.LogErrorCollected,
+			LogInfoDropped: a.LogInfoDropped, LogWarnDropped: a.LogWarnDropped, LogErrorDropped: a.LogErrorDropped,
+			LogWarnCount: a.LogWarnCount, LogErrorCount: a.LogErrorCount,
 		}
 		v.Attempt = &av
 	}

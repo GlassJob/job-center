@@ -1,0 +1,16 @@
+meta {
+  name: List execution logs
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/executions/{{execution_id}}/logs?after=0&limit=100&attempt_id=
+  body: none
+  auth: none
+}
+
+docs {
+  # GET .../executions/:executionId/logs
+  after=sequence 游标；可选 attempt_id。
+}

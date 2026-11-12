@@ -1,0 +1,16 @@
+meta {
+  name: List executions (global)
+  type: http
+  seq: 0
+}
+
+get {
+  url: {{base_url}}/v1/admin/executions?keyword=&service_id=&job_id=&status=&instance_id=&created_from=&created_to=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/executions
+  全局执行列表。过滤：keyword / service_id / job_id / status / instance_id / created_from / created_to / page / limit。
+}

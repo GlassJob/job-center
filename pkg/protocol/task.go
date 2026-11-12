@@ -3,18 +3,20 @@ package protocol
 import "encoding/json"
 
 const (
-	TypeTaskExecute    = "task.execute"
-	TypeTaskExecuteAck = "task.execute_ack"
-	TypeTaskStarted    = "task.started"
-	TypeTaskProgress   = "task.progress"
-	TypeTaskLog        = "task.log"
-	TypeTaskCheckpoint = "task.checkpoint"
-	TypeTaskCompleted  = "task.completed"
-	TypeTaskFailed     = "task.failed"
-	TypeTaskResultAck  = "task.result_ack"
-	TypeTaskCancel     = "task.cancel"
-	TypeTaskCancelAck  = "task.cancel_ack"
-	TypeTaskCancelled  = "task.cancelled"
+	TypeTaskExecute        = "task.execute"
+	TypeTaskExecuteAck     = "task.execute_ack"
+	TypeTaskStarted        = "task.started"
+	TypeTaskProgress       = "task.progress"
+	TypeTaskLog            = "task.log"
+	TypeTaskCheckpoint     = "task.checkpoint"
+	TypeTaskCompleted      = "task.completed"
+	TypeTaskFailed         = "task.failed"
+	TypeTaskResultAck      = "task.result_ack"
+	TypeTaskCancel         = "task.cancel"
+	TypeTaskCancelAck      = "task.cancel_ack"
+	TypeTaskCancelled      = "task.cancelled"
+	TypeTaskSyncRunning    = "task.sync_running"
+	TypeTaskSyncRunningAck = "task.sync_running_ack"
 )
 
 // TaskExecute 中心 → Executor（1.1 用 job_code）。
@@ -65,10 +67,13 @@ type TaskLogEntry struct {
 }
 
 type TaskLog struct {
-	AttemptID  string         `json:"attempt_id"`
-	LeaseToken string         `json:"lease_token"`
-	Entries    []TaskLogEntry `json:"entries"`
-	Dropped    int            `json:"dropped,omitempty"`
+	AttemptID    string         `json:"attempt_id"`
+	LeaseToken   string         `json:"lease_token"`
+	Entries      []TaskLogEntry `json:"entries"`
+	Dropped      int            `json:"dropped,omitempty"`
+	DroppedInfo  int            `json:"dropped_info,omitempty"`
+	DroppedWarn  int            `json:"dropped_warn,omitempty"`
+	DroppedError int            `json:"dropped_error,omitempty"`
 }
 
 type TaskCheckpoint struct {
@@ -129,4 +134,26 @@ type TaskCancelled struct {
 	LeaseToken string `json:"lease_token"`
 	FinishedAt string `json:"finished_at"`
 	StoppedBy  string `json:"stopped_by,omitempty"`
+}
+
+// TaskSyncRunning 重连后上报本机仍在跑的 attempts（E→C）。
+type TaskSyncRunning struct {
+	Attempts []TaskSyncRunningItem `json:"attempts"`
+}
+
+type TaskSyncRunningItem struct {
+	ExecutionID string `json:"execution_id"`
+	AttemptID   string `json:"attempt_id"`
+	LeaseToken  string `json:"lease_token"`
+}
+
+type TaskSyncRunningAck struct {
+	Results []TaskSyncRunningResult `json:"results"`
+}
+
+type TaskSyncRunningResult struct {
+	AttemptID      string `json:"attempt_id"`
+	Status         string `json:"status"` // OK|GONE|REJECTED
+	LeaseExpiresAt string `json:"lease_expires_at,omitempty"`
+	Message        string `json:"message,omitempty"`
 }

@@ -23,7 +23,7 @@ func (h *ServiceHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	list, total, err := h.Services.ListServices(c.Request.Context(), c.Query("keyword"), page, limit)
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list services failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询服务失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -32,11 +32,11 @@ func (h *ServiceHandler) List(c *gin.Context) {
 func (h *ServiceHandler) Get(c *gin.Context) {
 	d, err := h.Services.GetService(c.Request.Context(), c.Param("serviceId"))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get service failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取服务失败")
 		return
 	}
 	response.OK(c, d)
@@ -45,7 +45,7 @@ func (h *ServiceHandler) Get(c *gin.Context) {
 func (h *ServiceHandler) Create(c *gin.Context) {
 	var in service.CreateServiceInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	svc, err := h.Services.CreateService(c.Request.Context(), in)
@@ -54,11 +54,11 @@ func (h *ServiceHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "service code already exists")
+		response.Fail(c, http.StatusConflict, 40900, "服务编码已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "create service failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "创建服务失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -80,7 +80,7 @@ func (h *ServiceHandler) Patch(c *gin.Context) {
 	id := c.Param("serviceId")
 	var in service.PatchServiceInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	before, _ := h.Services.GetService(c.Request.Context(), id)
@@ -90,11 +90,11 @@ func (h *ServiceHandler) Patch(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "patch service failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "更新服务失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -124,7 +124,7 @@ func (h *ServiceHandler) Delete(c *gin.Context) {
 	before, _ := h.Services.GetService(c.Request.Context(), id)
 	out, err := h.Services.DeleteService(c.Request.Context(), id, hard)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
@@ -132,7 +132,7 @@ func (h *ServiceHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "delete service failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "删除服务失败")
 		return
 	}
 	action := "service.disable"

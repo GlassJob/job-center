@@ -33,11 +33,11 @@ func (h *JobStateHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	list, total, err := h.States.List(c.Request.Context(), c.Param("serviceId"), c.Param("jobId"), c.Query("keyword"), page, limit)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "job not found")
+		response.Fail(c, http.StatusNotFound, 40400, "任务不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list states failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询状态失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -46,11 +46,11 @@ func (h *JobStateHandler) List(c *gin.Context) {
 func (h *JobStateHandler) Get(c *gin.Context) {
 	v, err := h.States.Get(c.Request.Context(), c.Param("serviceId"), c.Param("jobId"), c.Param("stateId"))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "state not found")
+		response.Fail(c, http.StatusNotFound, 40400, "状态不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get state failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取状态失败")
 		return
 	}
 	response.OK(c, v)
@@ -61,12 +61,12 @@ func (h *JobStateHandler) Create(c *gin.Context) {
 	jobID := c.Param("jobId")
 	var in service.CreateJobStateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	out, err := h.States.Create(c.Request.Context(), serviceID, jobID, in, adminUpdatedBy(c))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "job not found")
+		response.Fail(c, http.StatusNotFound, 40400, "任务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrInvalidInput) {
@@ -74,11 +74,11 @@ func (h *JobStateHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "key already exists")
+		response.Fail(c, http.StatusConflict, 40900, "键已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "create state failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "创建状态失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -102,7 +102,7 @@ func (h *JobStateHandler) Patch(c *gin.Context) {
 	stateID := c.Param("stateId")
 	var in service.PatchJobStateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	before, _ := h.States.Get(c.Request.Context(), serviceID, jobID, stateID)
@@ -112,15 +112,15 @@ func (h *JobStateHandler) Patch(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "version mismatch")
+		response.Fail(c, http.StatusConflict, 40900, "版本冲突，请刷新后重试")
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "state not found")
+		response.Fail(c, http.StatusNotFound, 40400, "状态不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "patch state failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "更新状态失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -146,11 +146,11 @@ func (h *JobStateHandler) Delete(c *gin.Context) {
 	before, _ := h.States.Get(c.Request.Context(), serviceID, jobID, stateID)
 	err := h.States.Delete(c.Request.Context(), serviceID, jobID, stateID)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "state not found")
+		response.Fail(c, http.StatusNotFound, 40400, "状态不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "delete state failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "删除状态失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{

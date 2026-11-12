@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ func (s *Audits) List(
 		result != model.AuditResultSuccess &&
 		result != model.AuditResultDenied &&
 		result != model.AuditResultFailed {
-		return nil, 0, fmt.Errorf("%w: result", ErrInvalidInput)
+		return nil, 0, Invalidf("结果")
 	}
 
 	from, err := parseOptionalTime("created_from", createdFrom)
@@ -41,7 +40,7 @@ func (s *Audits) List(
 		return nil, 0, err
 	}
 	if from != nil && to != nil && !from.Before(*to) {
-		return nil, 0, fmt.Errorf("%w: created_from must be before created_to", ErrInvalidInput)
+		return nil, 0, Invalidf("开始时间必须早于结束时间")
 	}
 
 	list, total, err := s.store.ListAudits(ctx, mysql.ListAuditsFilter{
@@ -69,7 +68,7 @@ func (s *Audits) List(
 func (s *Audits) Get(ctx context.Context, auditID string) (*model.OperationAuditView, error) {
 	id, err := strconv.ParseUint(strings.TrimSpace(auditID), 10, 64)
 	if err != nil || id == 0 {
-		return nil, fmt.Errorf("%w: auditId", ErrInvalidInput)
+		return nil, Invalidf("审计 ID")
 	}
 	row, err := s.store.GetAudit(ctx, id)
 	if err != nil {
@@ -92,7 +91,7 @@ func parseOptionalTime(name, raw string) (*time.Time, error) {
 		t, err = time.Parse(time.RFC3339, raw)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s (RFC3339)", ErrInvalidInput, name)
+		return nil, Invalidf("%s 须为 RFC3339 时间", name)
 	}
 	t = t.UTC()
 	return &t, nil

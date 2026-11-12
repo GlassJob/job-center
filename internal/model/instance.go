@@ -45,6 +45,71 @@ type Instance struct {
 
 func (Instance) TableName() string { return "instances" }
 
+type InstanceJobView struct {
+	JobID          string    `json:"job_id"`
+	JobCode        string    `json:"job_code"`
+	HandlerVersion string    `json:"handler_version"`
+	MaxConcurrency *uint     `json:"max_concurrency,omitempty"`
+	RegisteredAt   time.Time `json:"registered_at"`
+}
+
+type InstanceView struct {
+	ID              string            `json:"id"`
+	ServiceID       string            `json:"service_id"`
+	ServiceCode     string            `json:"service_code,omitempty"`
+	ServiceName     string            `json:"service_name,omitempty"`
+	InstanceKey     string            `json:"instance_key"`
+	SessionID       string            `json:"session_id,omitempty"`
+	SessionEpoch    uint64            `json:"session_epoch"`
+	Environment     string            `json:"environment,omitempty"`
+	Hostname        string            `json:"hostname,omitempty"`
+	IPAddress       string            `json:"ip_address,omitempty"`
+	ReportedIP      string            `json:"reported_ip,omitempty"`
+	PID             *uint             `json:"pid,omitempty"`
+	Language        string            `json:"language,omitempty"`
+	RuntimeVersion  string            `json:"runtime_version,omitempty"`
+	SDKVersion      string            `json:"sdk_version,omitempty"`
+	ProtocolVersion string            `json:"protocol_version,omitempty"`
+	AppVersion      string            `json:"app_version,omitempty"`
+	GitCommit       string            `json:"git_commit,omitempty"`
+	BuildTime       *time.Time        `json:"build_time,omitempty"`
+	StartedAt       time.Time         `json:"started_at"`
+	RegisteredAt    time.Time         `json:"registered_at"`
+	ConnectedAt     *time.Time        `json:"connected_at,omitempty"`
+	DisconnectedAt  *time.Time        `json:"disconnected_at,omitempty"`
+	LastHeartbeatAt *time.Time        `json:"last_heartbeat_at,omitempty"`
+	Status          string            `json:"status"`
+	MaxConcurrency  uint              `json:"max_concurrency"`
+	RunningCount    uint              `json:"running_count"`
+	GatewayNodeID   string            `json:"gateway_node_id,omitempty"`
+	Metadata        map[string]any    `json:"metadata,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
+	Jobs            []InstanceJobView `json:"jobs,omitempty"`
+}
+
+func (i Instance) View(jobs []InstanceJobView) InstanceView {
+	meta := i.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	if jobs == nil {
+		jobs = []InstanceJobView{}
+	}
+	return InstanceView{
+		ID: i.ID, ServiceID: i.ServiceID, InstanceKey: i.InstanceKey,
+		SessionID: i.SessionID, SessionEpoch: i.SessionEpoch, Environment: i.Environment,
+		Hostname: i.Hostname, IPAddress: i.IPAddress, ReportedIP: i.ReportedIP, PID: i.PID,
+		Language: i.Language, RuntimeVersion: i.RuntimeVersion, SDKVersion: i.SDKVersion,
+		ProtocolVersion: i.ProtocolVersion, AppVersion: i.AppVersion, GitCommit: i.GitCommit,
+		BuildTime: i.BuildTime, StartedAt: i.StartedAt, RegisteredAt: i.RegisteredAt,
+		ConnectedAt: i.ConnectedAt, DisconnectedAt: i.DisconnectedAt, LastHeartbeatAt: i.LastHeartbeatAt,
+		Status: i.Status, MaxConcurrency: i.MaxConcurrency, RunningCount: i.RunningCount,
+		GatewayNodeID: i.GatewayNodeID, Metadata: meta, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
+		Jobs: jobs,
+	}
+}
+
 type InstanceJob struct {
 	ID              string    `gorm:"column:id;primaryKey"`
 	InstanceID      string    `gorm:"column:instance_id"`

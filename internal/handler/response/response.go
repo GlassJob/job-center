@@ -13,7 +13,7 @@ type Envelope struct {
 }
 
 func OK(c *gin.Context, data any) {
-	c.JSON(http.StatusOK, Envelope{Code: 0, Message: "ok", Data: data})
+	c.JSON(http.StatusOK, Envelope{Code: 0, Message: "成功", Data: data})
 }
 
 func Fail(c *gin.Context, httpStatus int, code int, message string) {

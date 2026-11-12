@@ -1,0 +1,16 @@
+meta {
+  name: List schedule triggers
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/schedules/{{schedule_id}}/triggers?status=&fire_from=&fire_to=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/services/:serviceId/jobs/:jobId/schedules/:scheduleId/triggers
+  单排班触点只读列表。过滤：status / fire_from / fire_to / page / limit。
+}

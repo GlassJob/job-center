@@ -14,7 +14,50 @@ type Config struct {
 	Database  DatabaseConfig  `mapstructure:"database"`
 	Security  SecurityConfig  `mapstructure:"security"`
 	WebSocket WebSocketConfig `mapstructure:"websocket"`
+	Scheduler SchedulerConfig `mapstructure:"scheduler"`
 	Log       LogConfig       `mapstructure:"log"`
+}
+
+type SchedulerConfig struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	GenerateInterval string `mapstructure:"generate_interval"`
+	ClaimInterval    string `mapstructure:"claim_interval"` // 兼容：未配 claim_max_idle 时作为 maxIdle
+	ClaimLead        string `mapstructure:"claim_lead"`
+	ClaimMaxIdle     string `mapstructure:"claim_max_idle"`
+	QueueInterval    string `mapstructure:"queue_interval"`
+	Horizon          string `mapstructure:"horizon"`
+	ClaimBatch       int    `mapstructure:"claim_batch"`
+	QueueBatch       int    `mapstructure:"queue_batch"`
+	ClaimTTL         string `mapstructure:"claim_ttl"`
+}
+
+func (c SchedulerConfig) GenerateIntervalDuration() time.Duration {
+	return parseDur(c.GenerateInterval, 30*time.Second)
+}
+func (c SchedulerConfig) ClaimIntervalDuration() time.Duration {
+	return parseDur(c.ClaimInterval, time.Second)
+}
+func (c SchedulerConfig) ClaimLeadDuration() time.Duration {
+	return parseDur(c.ClaimLead, time.Second)
+}
+func (c SchedulerConfig) ClaimMaxIdleDuration() time.Duration {
+	if strings.TrimSpace(c.ClaimMaxIdle) != "" {
+		return parseDur(c.ClaimMaxIdle, 5*time.Second)
+	}
+	// 兼容旧 claim_interval：语义改为最长空闲睡
+	if strings.TrimSpace(c.ClaimInterval) != "" {
+		return parseDur(c.ClaimInterval, 5*time.Second)
+	}
+	return 5 * time.Second
+}
+func (c SchedulerConfig) QueueIntervalDuration() time.Duration {
+	return parseDur(c.QueueInterval, 2*time.Second)
+}
+func (c SchedulerConfig) HorizonDuration() time.Duration {
+	return parseDur(c.Horizon, time.Hour)
+}
+func (c SchedulerConfig) ClaimTTLDuration() time.Duration {
+	return parseDur(c.ClaimTTL, 30*time.Second)
 }
 
 type WebSocketConfig struct {
@@ -119,6 +162,16 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("websocket.lease_ttl", "30s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
+	v.SetDefault("scheduler.enabled", true)
+	v.SetDefault("scheduler.generate_interval", "24h")
+	v.SetDefault("scheduler.claim_interval", "5s") // 兼容旧字段：作 claim_max_idle
+	v.SetDefault("scheduler.claim_lead", "1s")
+	v.SetDefault("scheduler.claim_max_idle", "5s")
+	v.SetDefault("scheduler.queue_interval", "2s")
+	v.SetDefault("scheduler.horizon", "168h") // 7d
+	v.SetDefault("scheduler.claim_batch", 50)
+	v.SetDefault("scheduler.queue_batch", 50)
+	v.SetDefault("scheduler.claim_ttl", "30s")
 
 	v.SetEnvPrefix("JC")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -152,6 +205,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.WebSocket.SendQueueSize <= 0 {
 		cfg.WebSocket.SendQueueSize = 64
+	}
+	if cfg.Scheduler.ClaimBatch <= 0 {
+		cfg.Scheduler.ClaimBatch = 50
+	}
+	if cfg.Scheduler.QueueBatch <= 0 {
+		cfg.Scheduler.QueueBatch = 50
 	}
 	return &cfg, nil
 }

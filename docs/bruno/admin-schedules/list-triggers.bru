@@ -1,0 +1,17 @@
+meta {
+  name: List triggers (global)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{base_url}}/v1/admin/triggers?schedule_id=&job_id=&service_id=&status=&fire_from=&fire_to=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/triggers
+  全平台触点只读列表。过滤：schedule_id / job_id / service_id / status / fire_from / fire_to / page / limit。
+  默认 fire_at ASC。
+}

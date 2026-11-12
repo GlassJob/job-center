@@ -23,7 +23,7 @@ func (h *CredentialHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	list, total, err := h.Credentials.List(c.Request.Context(), serviceID, c.Query("keyword"), c.Query("status"), page, limit)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrInvalidInput) {
@@ -31,7 +31,7 @@ func (h *CredentialHandler) List(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list credentials failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询凭据失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -40,11 +40,11 @@ func (h *CredentialHandler) List(c *gin.Context) {
 func (h *CredentialHandler) Get(c *gin.Context) {
 	v, err := h.Credentials.Get(c.Request.Context(), c.Param("serviceId"), c.Param("credentialId"))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "credential not found")
+		response.Fail(c, http.StatusNotFound, 40400, "凭据不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get credential failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取凭据失败")
 		return
 	}
 	response.OK(c, v)
@@ -54,7 +54,7 @@ func (h *CredentialHandler) Create(c *gin.Context) {
 	serviceID := c.Param("serviceId")
 	var in service.CreateCredentialInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	createdBy := middleware.OperatorID(c.Request.Context())
@@ -63,7 +63,7 @@ func (h *CredentialHandler) Create(c *gin.Context) {
 	}
 	out, err := h.Credentials.Create(c.Request.Context(), serviceID, in, createdBy)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "service not found")
+		response.Fail(c, http.StatusNotFound, 40400, "服务不存在")
 		return
 	}
 	if errors.Is(err, service.ErrInvalidInput) {
@@ -71,11 +71,11 @@ func (h *CredentialHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "credential name already exists")
+		response.Fail(c, http.StatusConflict, 40900, "凭据名称已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "create credential failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "创建凭据失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -98,7 +98,7 @@ func (h *CredentialHandler) Patch(c *gin.Context) {
 	id := c.Param("credentialId")
 	var in service.PatchCredentialInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	before, _ := h.Credentials.Get(c.Request.Context(), serviceID, id)
@@ -108,15 +108,15 @@ func (h *CredentialHandler) Patch(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "credential name already exists")
+		response.Fail(c, http.StatusConflict, 40900, "凭据名称已存在")
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "credential not found")
+		response.Fail(c, http.StatusNotFound, 40400, "凭据不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "patch credential failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "更新凭据失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -145,15 +145,15 @@ func (h *CredentialHandler) Rotate(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "credential not found")
+		response.Fail(c, http.StatusNotFound, 40400, "凭据不存在")
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "rotate conflict")
+		response.Fail(c, http.StatusConflict, 40900, "轮换冲突")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "rotate credential failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "轮换凭据失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -183,11 +183,11 @@ func (h *CredentialHandler) Delete(c *gin.Context) {
 	}
 	out, err := h.Credentials.Delete(c.Request.Context(), serviceID, id, revokedBy, hard)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "credential not found")
+		response.Fail(c, http.StatusNotFound, 40400, "凭据不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "delete credential failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "删除凭据失败")
 		return
 	}
 	action := "credential.revoke"

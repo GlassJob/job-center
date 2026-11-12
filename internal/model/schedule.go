@@ -46,6 +46,7 @@ type Schedule struct {
 	DispatchStrategy        string         `gorm:"column:dispatch_strategy"`
 	NextFireAt              *time.Time     `gorm:"column:next_fire_at"`
 	LastFireAt              *time.Time     `gorm:"column:last_fire_at"`
+	HorizonAt               *time.Time     `gorm:"column:horizon_at"`
 	ConfigSource            string         `gorm:"column:config_source"`
 	Version                 uint           `gorm:"column:version"`
 	UpdatedBy               string         `gorm:"column:updated_by"`
@@ -78,6 +79,7 @@ type ScheduleView struct {
 	DispatchStrategy        string         `json:"dispatch_strategy"`
 	NextFireAt              *time.Time     `json:"next_fire_at,omitempty"`
 	LastFireAt              *time.Time     `json:"last_fire_at,omitempty"`
+	HorizonAt               *time.Time     `json:"horizon_at,omitempty"`
 	ConfigSource            string         `json:"config_source"`
 	Version                 uint           `json:"version"`
 	UpdatedBy               string         `json:"updated_by,omitempty"`
@@ -113,6 +115,7 @@ func (s *Schedule) View() ScheduleView {
 		DispatchStrategy:        s.DispatchStrategy,
 		NextFireAt:              s.NextFireAt,
 		LastFireAt:              s.LastFireAt,
+		HorizonAt:               s.HorizonAt,
 		ConfigSource:            s.ConfigSource,
 		Version:                 s.Version,
 		UpdatedBy:               s.UpdatedBy,

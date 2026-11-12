@@ -32,15 +32,18 @@ func (s *Store) GetService(ctx context.Context, id string) (*model.Service, erro
 	return &svc, nil
 }
 
-// GetServiceDetail 带子查询计数；用 Raw 保留复杂 SQL 能力。
-func (s *Store) GetServiceDetail(ctx context.Context, id string) (*model.ServiceDetail, error) {
-	var d model.ServiceDetail
-	tx := s.db.WithContext(ctx).Raw(`
+const serviceDetailSelect = `
 		SELECT s.id, s.code, s.name, COALESCE(s.description,'') AS description, s.status, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM jobs WHERE service_id = s.id) AS job_count,
 			(SELECT COUNT(*) FROM instances WHERE service_id = s.id) AS instance_count,
+			(SELECT COUNT(*) FROM instances WHERE service_id = s.id AND status = 'ONLINE') AS online_instance_count,
 			(SELECT COUNT(*) FROM service_credentials WHERE service_id = s.id) AS credential_count
-		FROM services s WHERE s.id = ?`, id).Scan(&d)
+		FROM services s`
+
+// GetServiceDetail 带子查询计数；用 Raw 保留复杂 SQL 能力。
+func (s *Store) GetServiceDetail(ctx context.Context, id string) (*model.ServiceDetail, error) {
+	var d model.ServiceDetail
+	tx := s.db.WithContext(ctx).Raw(serviceDetailSelect+` WHERE s.id = ?`, id).Scan(&d)
 	if tx.Error != nil {
 		return nil, tx.Error
 	}
@@ -50,7 +53,7 @@ func (s *Store) GetServiceDetail(ctx context.Context, id string) (*model.Service
 	return &d, nil
 }
 
-func (s *Store) ListServices(ctx context.Context, keyword string, page, limit int) ([]model.Service, int64, error) {
+func (s *Store) ListServices(ctx context.Context, keyword string, page, limit int) ([]model.ServiceDetail, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -60,18 +63,34 @@ func (s *Store) ListServices(ctx context.Context, keyword string, page, limit in
 	if limit > 100 {
 		limit = 100
 	}
-	q := s.db.WithContext(ctx).Model(&model.Service{})
+	countQ := s.db.WithContext(ctx).Model(&model.Service{})
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		like := "%" + kw + "%"
-		q = q.Where("code LIKE ? OR name LIKE ?", like, like)
+		countQ = countQ.Where("code LIKE ? OR name LIKE ?", like, like)
 	}
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var list []model.Service
-	err := q.Order("created_at DESC").Limit(limit).Offset((page - 1) * limit).Find(&list).Error
-	return list, total, err
+
+	sql := serviceDetailSelect
+	args := []any{}
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		like := "%" + kw + "%"
+		sql += ` WHERE s.code LIKE ? OR s.name LIKE ?`
+		args = append(args, like, like)
+	}
+	sql += ` ORDER BY s.created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, (page-1)*limit)
+
+	var list []model.ServiceDetail
+	if err := s.db.WithContext(ctx).Raw(sql, args...).Scan(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	if list == nil {
+		list = []model.ServiceDetail{}
+	}
+	return list, total, nil
 }
 
 type ServicePatch struct {

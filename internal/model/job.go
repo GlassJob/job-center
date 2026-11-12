@@ -44,31 +44,49 @@ type Job struct {
 func (Job) TableName() string { return "jobs" }
 
 type JobView struct {
-	ID                    string         `json:"id"`
-	ServiceID             string         `json:"service_id"`
-	Code                  string         `json:"code"`
-	Name                  string         `json:"name"`
-	Description           string         `json:"description,omitempty"`
-	Enabled               bool           `json:"enabled"`
-	Language              string         `json:"language,omitempty"`
-	Handler               string         `json:"handler,omitempty"`
-	HandlerVersion        string         `json:"handler_version,omitempty"`
-	ParamsSchema          map[string]any `json:"params_schema,omitempty"`
-	SchemaHash            string         `json:"schema_hash,omitempty"`
-	MetadataVersion       uint           `json:"metadata_version"`
-	IdempotencyMode       string         `json:"idempotency_mode"`
-	IdempotencyVerified   bool           `json:"idempotency_verified"`
-	SupportsCancel        bool           `json:"supports_cancel"`
-	SupportsTimeout       bool           `json:"supports_timeout"`
-	SupportsProgress      bool           `json:"supports_progress"`
-	SupportsState         bool           `json:"supports_state"`
-	DefaultTimeoutSeconds uint           `json:"default_timeout_seconds"`
-	Capabilities          map[string]any `json:"capabilities,omitempty"`
-	Status                string         `json:"status"`
-	FirstRegisteredAt     *time.Time     `json:"first_registered_at,omitempty"`
-	LastRegisteredAt      *time.Time     `json:"last_registered_at,omitempty"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
+	ID                    string            `json:"id"`
+	ServiceID             string            `json:"service_id"`
+	ServiceCode           string            `json:"service_code,omitempty"`
+	ServiceName           string            `json:"service_name,omitempty"`
+	Code                  string            `json:"code"`
+	Name                  string            `json:"name"`
+	Description           string            `json:"description,omitempty"`
+	Enabled               bool              `json:"enabled"`
+	Language              string            `json:"language,omitempty"`
+	Handler               string            `json:"handler,omitempty"`
+	HandlerVersion        string            `json:"handler_version,omitempty"`
+	ParamsSchema          map[string]any    `json:"params_schema,omitempty"`
+	SchemaHash            string            `json:"schema_hash,omitempty"`
+	MetadataVersion       uint              `json:"metadata_version"`
+	IdempotencyMode       string            `json:"idempotency_mode"`
+	IdempotencyVerified   bool              `json:"idempotency_verified"`
+	SupportsCancel        bool              `json:"supports_cancel"`
+	SupportsTimeout       bool              `json:"supports_timeout"`
+	SupportsProgress      bool              `json:"supports_progress"`
+	SupportsState         bool              `json:"supports_state"`
+	DefaultTimeoutSeconds uint              `json:"default_timeout_seconds"`
+	Capabilities          map[string]any    `json:"capabilities,omitempty"`
+	Status                string            `json:"status"`
+	FirstRegisteredAt     *time.Time        `json:"first_registered_at,omitempty"`
+	LastRegisteredAt      *time.Time        `json:"last_registered_at,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
+	Schedules             []ScheduleSummary `json:"schedules,omitempty"`
+	LastExecutionID       *string           `json:"last_execution_id,omitempty"`
+	LastExecutionStatus   string            `json:"last_execution_status,omitempty"`
+	LastExecutionAt       *time.Time        `json:"last_execution_at,omitempty"`
+}
+
+// ScheduleSummary 任务列表嵌套的调度摘要。
+type ScheduleSummary struct {
+	ID             string     `json:"id"`
+	Code           string     `json:"code"`
+	Name           string     `json:"name"`
+	Enabled        bool       `json:"enabled"`
+	CronExpression string     `json:"cron_expression,omitempty"`
+	Timezone       string     `json:"timezone,omitempty"`
+	NextFireAt     *time.Time `json:"next_fire_at,omitempty"`
+	LastFireAt     *time.Time `json:"last_fire_at,omitempty"`
 }
 
 func (j *Job) View() JobView {

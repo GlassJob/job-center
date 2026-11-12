@@ -26,7 +26,7 @@ func (h *ClientHandler) List(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "list clients failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "查询客户端失败")
 		return
 	}
 	response.OK(c, gin.H{"list": list, "total": total})
@@ -35,11 +35,11 @@ func (h *ClientHandler) List(c *gin.Context) {
 func (h *ClientHandler) Get(c *gin.Context) {
 	v, err := h.Clients.Get(c.Request.Context(), c.Param("clientId"))
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "client not found")
+		response.Fail(c, http.StatusNotFound, 40400, "客户端不存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "get client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "获取客户端失败")
 		return
 	}
 	response.OK(c, v)
@@ -48,7 +48,7 @@ func (h *ClientHandler) Get(c *gin.Context) {
 func (h *ClientHandler) Create(c *gin.Context) {
 	var in service.CreateClientInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	createdBy := middleware.OperatorID(c.Request.Context())
@@ -61,11 +61,11 @@ func (h *ClientHandler) Create(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "client name already exists")
+		response.Fail(c, http.StatusConflict, 40900, "客户端名称已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "create client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "创建客户端失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -87,7 +87,7 @@ func (h *ClientHandler) Patch(c *gin.Context) {
 	id := c.Param("clientId")
 	var in service.PatchClientInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		response.Fail(c, http.StatusBadRequest, 40000, "invalid body")
+		response.Fail(c, http.StatusBadRequest, 40000, "请求体无效")
 		return
 	}
 	before, _ := h.Clients.Get(c.Request.Context(), id)
@@ -97,15 +97,15 @@ func (h *ClientHandler) Patch(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "client not found")
+		response.Fail(c, http.StatusNotFound, 40400, "客户端不存在")
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "client name already exists")
+		response.Fail(c, http.StatusConflict, 40900, "客户端名称已存在")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "patch client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "更新客户端失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -133,15 +133,15 @@ func (h *ClientHandler) Rotate(c *gin.Context) {
 		return
 	}
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "client not found")
+		response.Fail(c, http.StatusNotFound, 40400, "客户端不存在")
 		return
 	}
 	if errors.Is(err, service.ErrConflict) {
-		response.Fail(c, http.StatusConflict, 40900, "rotate conflict")
+		response.Fail(c, http.StatusConflict, 40900, "轮换冲突")
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "rotate client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "轮换客户端失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -169,7 +169,7 @@ func (h *ClientHandler) Revoke(c *gin.Context) {
 	}
 	out, err := h.Clients.Revoke(c.Request.Context(), id, revokedBy)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "client not found")
+		response.Fail(c, http.StatusNotFound, 40400, "客户端不存在")
 		return
 	}
 	if errors.Is(err, service.ErrForbidden) {
@@ -177,7 +177,7 @@ func (h *ClientHandler) Revoke(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "revoke client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "吊销客户端失败")
 		return
 	}
 	_ = h.Store.InsertAudit(c.Request.Context(), mysql.AuditRow{
@@ -206,7 +206,7 @@ func (h *ClientHandler) Delete(c *gin.Context) {
 	}
 	out, err := h.Clients.Delete(c.Request.Context(), id, revokedBy, hard)
 	if errors.Is(err, service.ErrNotFound) {
-		response.Fail(c, http.StatusNotFound, 40400, "client not found")
+		response.Fail(c, http.StatusNotFound, 40400, "客户端不存在")
 		return
 	}
 	if errors.Is(err, service.ErrForbidden) {
@@ -214,7 +214,7 @@ func (h *ClientHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		response.Fail(c, http.StatusInternalServerError, 50000, "delete client failed")
+		response.Fail(c, http.StatusInternalServerError, 50000, "删除客户端失败")
 		return
 	}
 	action := "client.revoke"

@@ -12,8 +12,7 @@ post {
 
 body:json {
   {
-    "params": { "name": "bruno" },
-    "idempotency_key": "bruno-{{$timestamp}}"
+    "params": { "name": "bruno" }
   }
 }
 
@@ -21,6 +20,7 @@ docs {
   # POST .../executions
   
   可选 `instance_id` 指定实例。无在线实例时 status=QUEUED。
+  `idempotency_key` 可选；勿在本请求 pre-request 里改 body（会破坏 collection HMAC）。
 }
 
 script:post-response {

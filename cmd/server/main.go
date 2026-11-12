@@ -16,6 +16,7 @@ import (
 	"github.com/GlassJob/job-center/internal/pkg/database"
 	applog "github.com/GlassJob/job-center/internal/pkg/log"
 	"github.com/GlassJob/job-center/internal/repository/mysql"
+	"github.com/GlassJob/job-center/internal/scheduler"
 	"github.com/GlassJob/job-center/migrations"
 )
 
@@ -66,7 +67,7 @@ func run() error {
 		return fmt.Errorf("bootstrap client: %w", err)
 	}
 
-	r := handler.NewRouter(handler.Deps{
+	app := handler.NewRouter(handler.Deps{
 		Store:     store,
 		Pepper:    cfg.Security.CredentialPepper,
 		Skew:      cfg.Security.TimestampSkew(),
@@ -74,7 +75,14 @@ func run() error {
 		WebSocket: cfg.WebSocket,
 		Log:       log,
 	})
-	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: r}
+	sch := scheduler.New(store, app.Executions, cfg.Scheduler, cfg.NodeID, log)
+	app.Schedules.SetHorizonGenerator(sch)
+	if app.SchedulerHandler != nil {
+		app.SchedulerHandler.Scheduler = sch
+	}
+	go sch.Start(ctx)
+
+	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: app.Engine}
 
 	errCh := make(chan error, 1)
 	go func() {

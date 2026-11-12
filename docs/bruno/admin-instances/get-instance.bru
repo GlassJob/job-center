@@ -1,0 +1,16 @@
+meta {
+  name: Get instance
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/instances/{{instance_id}}
+  body: none
+  auth: none
+}
+
+docs {
+  实例详情，含已注册 jobs（job_id / job_code / handler_version）。
+  权限：`job.instance.view`。
+}

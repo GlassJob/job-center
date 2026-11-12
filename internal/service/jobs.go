@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,13 +41,13 @@ type PatchJobInput struct {
 func (s *Jobs) ensureService(ctx context.Context, serviceID string) error {
 	svc, err := s.store.GetService(ctx, serviceID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: service", ErrNotFound)
+		return NotFoundf("服务")
 	}
 	if err != nil {
 		return err
 	}
 	if svc.Status == model.ServiceStatusDisabled {
-		return fmt.Errorf("%w: service disabled", ErrInvalidInput)
+		return Invalidf("服务已禁用")
 	}
 	return nil
 }
@@ -56,33 +55,105 @@ func (s *Jobs) ensureService(ctx context.Context, serviceID string) error {
 func (s *Jobs) ensureServiceExists(ctx context.Context, serviceID string) error {
 	_, err := s.store.GetService(ctx, serviceID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: service", ErrNotFound)
+		return NotFoundf("服务")
 	}
 	return err
 }
 
 func (s *Jobs) List(ctx context.Context, serviceID, keyword, status, enabledRaw string, page, limit int) ([]model.JobView, int64, error) {
-	if err := s.ensureServiceExists(ctx, serviceID); err != nil {
-		return nil, 0, err
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		if err := s.ensureServiceExists(ctx, sid); err != nil {
+			return nil, 0, err
+		}
 	}
 	if status != "" && status != model.JobStatusActive && status != model.JobStatusOrphaned && status != model.JobStatusDisabled {
-		return nil, 0, fmt.Errorf("%w: status", ErrInvalidInput)
+		return nil, 0, Invalidf("状态")
 	}
 	var enabled *bool
 	if strings.TrimSpace(enabledRaw) != "" {
 		v, err := strconv.ParseBool(strings.TrimSpace(enabledRaw))
 		if err != nil {
-			return nil, 0, fmt.Errorf("%w: enabled", ErrInvalidInput)
+			return nil, 0, Invalidf("enabled 参数")
 		}
 		enabled = &v
 	}
+	return s.listJobs(ctx, serviceID, keyword, status, enabled, page, limit, false)
+}
+
+// ListGlobal 全局任务列表，附带服务字段、调度摘要与最近执行。
+func (s *Jobs) ListGlobal(ctx context.Context, serviceID, keyword, status, enabledRaw string, page, limit int) ([]model.JobView, int64, error) {
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		if err := s.ensureServiceExists(ctx, sid); err != nil {
+			return nil, 0, err
+		}
+	}
+	if status != "" && status != model.JobStatusActive && status != model.JobStatusOrphaned && status != model.JobStatusDisabled {
+		return nil, 0, Invalidf("状态")
+	}
+	var enabled *bool
+	if strings.TrimSpace(enabledRaw) != "" {
+		v, err := strconv.ParseBool(strings.TrimSpace(enabledRaw))
+		if err != nil {
+			return nil, 0, Invalidf("enabled 参数")
+		}
+		enabled = &v
+	}
+	return s.listJobs(ctx, serviceID, keyword, status, enabled, page, limit, true)
+}
+
+func (s *Jobs) listJobs(ctx context.Context, serviceID, keyword, status string, enabled *bool, page, limit int, enrich bool) ([]model.JobView, int64, error) {
 	list, total, err := s.store.ListJobs(ctx, serviceID, keyword, status, enabled, page, limit)
 	if err != nil {
 		return nil, 0, err
 	}
 	out := make([]model.JobView, 0, len(list))
+	jobIDs := make([]string, 0, len(list))
 	for i := range list {
-		out = append(out, list[i].View())
+		v := list[i].View()
+		v.ServiceCode = list[i].ServiceCode
+		v.ServiceName = list[i].ServiceName
+		out = append(out, v)
+		jobIDs = append(jobIDs, list[i].ID)
+	}
+	if !enrich || len(jobIDs) == 0 {
+		return out, total, nil
+	}
+
+	schedules, err := s.store.ListSchedulesByJobIDs(ctx, jobIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	byJob := map[string][]model.ScheduleSummary{}
+	for i := range schedules {
+		sch := schedules[i]
+		byJob[sch.JobID] = append(byJob[sch.JobID], model.ScheduleSummary{
+			ID: sch.ID, Code: sch.Code, Name: sch.Name, Enabled: sch.Enabled,
+			CronExpression: sch.CronExpression, Timezone: sch.Timezone,
+			NextFireAt: sch.NextFireAt, LastFireAt: sch.LastFireAt,
+		})
+	}
+	latest, err := s.store.LatestExecutionByJobIDs(ctx, jobIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range out {
+		if sum, ok := byJob[out[i].ID]; ok {
+			out[i].Schedules = sum
+		} else {
+			out[i].Schedules = []model.ScheduleSummary{}
+		}
+		if ex, ok := latest[out[i].ID]; ok {
+			id := ex.ID
+			out[i].LastExecutionID = &id
+			out[i].LastExecutionStatus = ex.Status
+			at := ex.CreatedAt
+			if ex.FinishedAt != nil {
+				at = *ex.FinishedAt
+			} else if ex.StartedAt != nil {
+				at = *ex.StartedAt
+			}
+			out[i].LastExecutionAt = &at
+		}
 	}
 	return out, total, nil
 }
@@ -106,20 +177,20 @@ func (s *Jobs) Create(ctx context.Context, serviceID string, in CreateJobInput) 
 	code := strings.TrimSpace(in.Code)
 	name := strings.TrimSpace(in.Name)
 	if !jobCodeRe.MatchString(code) {
-		return nil, fmt.Errorf("%w: code", ErrInvalidInput)
+		return nil, Invalidf("编码")
 	}
 	if name == "" || len(name) > 128 {
-		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+		return nil, Invalidf("名称")
 	}
 	desc := strings.TrimSpace(in.Description)
 	if len(desc) > 1000 {
-		return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+		return nil, Invalidf("描述")
 	}
 	timeout := uint(300)
 	if in.DefaultTimeoutSeconds != nil {
 		timeout = *in.DefaultTimeoutSeconds
 		if timeout < 1 || timeout > 604800 {
-			return nil, fmt.Errorf("%w: default_timeout_seconds", ErrInvalidInput)
+			return nil, Invalidf("默认超时秒数")
 		}
 	}
 	enabled := true
@@ -131,7 +202,7 @@ func (s *Jobs) Create(ctx context.Context, serviceID string, in CreateJobInput) 
 		return nil, err
 	}
 	if taken {
-		return nil, fmt.Errorf("%w: code already exists", ErrConflict)
+		return nil, Conflictf("编码已存在")
 	}
 	j := &model.Job{
 		ID:                    idgen.New(),
@@ -166,7 +237,7 @@ func (s *Jobs) Patch(ctx context.Context, serviceID, id string, in PatchJobInput
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" || len(n) > 128 {
-			return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+			return nil, Invalidf("名称")
 		}
 		p.Name = &n
 		changed = true
@@ -174,7 +245,7 @@ func (s *Jobs) Patch(ctx context.Context, serviceID, id string, in PatchJobInput
 	if in.Description != nil {
 		d := strings.TrimSpace(*in.Description)
 		if len(d) > 1000 {
-			return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+			return nil, Invalidf("描述")
 		}
 		p.Description = &d
 		changed = true
@@ -190,7 +261,7 @@ func (s *Jobs) Patch(ctx context.Context, serviceID, id string, in PatchJobInput
 	if in.DefaultTimeoutSeconds != nil {
 		t := *in.DefaultTimeoutSeconds
 		if t < 1 || t > 604800 {
-			return nil, fmt.Errorf("%w: default_timeout_seconds", ErrInvalidInput)
+			return nil, Invalidf("默认超时秒数")
 		}
 		p.DefaultTimeoutSeconds = &t
 		changed = true
@@ -242,8 +313,7 @@ func (s *Jobs) Delete(ctx context.Context, serviceID, id string, hard bool) (*De
 		return nil, err
 	}
 	if deps.Total() > 0 {
-		return nil, fmt.Errorf("%w: job still has dependents (versions=%d schedules=%d states=%d instance_jobs=%d executions=%d)",
-			ErrConflict, deps.Versions, deps.Schedules, deps.States, deps.InstanceJobs, deps.Executions)
+		return nil, Conflictf("任务仍有依赖资源（versions=%d schedules=%d states=%d instance_jobs=%d executions=%d）", deps.Versions, deps.Schedules, deps.States, deps.InstanceJobs, deps.Executions)
 	}
 	if err := s.store.DeleteJob(ctx, serviceID, id); err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {

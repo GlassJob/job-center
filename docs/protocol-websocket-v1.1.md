@@ -35,10 +35,12 @@
 | `task.cancel` | C→E | Admin 取消下发 |
 | `task.cancel_ack` / `task.cancelled` | E→C | 取消确认 / 已停止 |
 | `task.result_ack` | C→E | 中心确认（`OK` / `REJECTED`） |
-| `task.log` / `task.checkpoint` | E→C | MVP：校验 lease 后 `result_ack OK`，不落库 |
+| `task.sync_running` / `task.sync_running_ack` | E→C / C→E | 重连后同步本机仍在跑的 attempts 并续租 |
+| `task.log` | E→C | 落库 `execution_logs`；幂等 seq；回填 `acked_through_seq`；帧可带 `dropped_*` |
+| `task.checkpoint` | E→C | 写入 `job_states`（key=`default`） |
 | `system.error` / `system.notice` | C→E | 错误 / 顶号通知 |
 
-未实现：日志持久化、checkpoint 写 state、`CANCEL_UNCONFIRMED` 超时回收。
+未实现：`CANCEL_UNCONFIRMED` 超时回收、LOST 扫描重派。
 
 应用层关闭码：`4001` 鉴权失败、`4002` 鉴权超时、`4003` 会话被顶、`4004` 协议不支持、`4005` 服务禁用。
 
@@ -193,13 +195,40 @@ AUTH
 | `execution_id` / `attempt_id` / `attempt_number` | |
 | `lease_token` / `lease_expires_at` | 回传必须带上 |
 | `job_code` / `job_name` | 1.1 用 job_code |
-| `params` / `state` / `state_version` | state MVP 恒为 `{}` |
+| `params` / `state` / `state_version` | `state` 来自 `job_states.key=default`；无记录则为 `{}` / `0` |
 | `timeout_seconds` / `deadline_at` / `trigger_type` / `handler_version` | |
 
-Executor 顺序建议：`execute_ack(accepted)` → `started` → `completed`|`failed`；每帧后收 `task.result_ack`。  
-错误 lease / 错 instance → `REJECTED`，库状态不变。
+Executor 顺序建议：`execute_ack(accepted)` → `started` →（可选 `checkpoint`）→ `completed`|`failed`；每帧后收 `task.result_ack`。  
+`task.completed.next_state` 与 `task.checkpoint.state` 均 upsert 到 `job_states.default`（`updated_by=executor`）。  
+错误 lease / 错 instance → `REJECTED`，库状态不变。  
+同一终态重复上报 → 幂等 `OK`（便于 pending 重放）；不同终态 → `REJECTED` / `ALREADY_FINISHED`。  
+`lease_expires_at` 过期仍接受合法 `lease_token` 的晚到终态（Center 宕机恢复场景）。
 
 Admin 触发：`POST /v1/admin/services/:serviceId/jobs/:jobId/executions`（见 [api.md](./api.md)）。
+
+### WS 断线续跑（同 attempt）
+
+- 任务 goroutine 不随 WS 断开取消；`service.heartbeat` 会续该 instance 上非终态 attempt 的租约。
+- 重连 register 后：Executor 先重放本地磁盘 pending 终态，再发 `task.sync_running`（`attempts[{execution_id,attempt_id,lease_token}]`）。
+- 中心 `task.sync_running_ack.results[]`：`OK`（附新 `lease_expires_at`）/ `GONE`（已终态，本地应停）/ `REJECTED`。
+- 终态（`completed`/`failed`/`cancelled`）先写入执行器 `{JC_DATA_DIR}/pending_results/`，收到 `result_ack OK` 后删除；保证 Center 恢复后必达。
+
+### `task.log`（执行日志落库）
+
+Go SDK：`job.Log()` 为**独立上报通道**（默认不打本机控制台）。本机 slog 照旧；需要双写时业务自行封装（`local.Info` + `job.Log().Info`）。
+
+SDK 缓冲（按 attempt）：
+
+- 容量 **100**；满则先 flush；仍满则按 DEBUG/INFO → WARN → ERROR 挤旧条目
+- 每 **1s** / 写入 **ERROR** / handler 返回前 flush → `publishSoft(task.log)`
+- 丢弃 WARN/ERROR 时合成一条 WARN（`fields.dropped_info/warn/error`），帧级带 `dropped` / `dropped_info` / `dropped_warn` / `dropped_error`
+
+中心 `OnLog`：
+
+- 校验 lease；`seq <= last_log_seq` 幂等跳过；写入 `execution_logs`
+- 按 level 累加 attempt 物理列 `log_{info,warn,error}_collected`；累加 `log_*_dropped`
+- 虚拟列 `log_warn_count` / `log_error_count` = collected + dropped
+- `result_ack` 回填 `acked_through_seq`
 
 ### 取消
 

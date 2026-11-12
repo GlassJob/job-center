@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -43,13 +42,13 @@ type PatchCredentialInput struct {
 func (s *Credentials) ensureService(ctx context.Context, serviceID string) error {
 	svc, err := s.store.GetService(ctx, serviceID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: service", ErrNotFound)
+		return NotFoundf("服务")
 	}
 	if err != nil {
 		return err
 	}
 	if svc.Status == model.ServiceStatusDisabled {
-		return fmt.Errorf("%w: service disabled", ErrInvalidInput)
+		return Invalidf("服务已禁用")
 	}
 	return nil
 }
@@ -59,7 +58,7 @@ func (s *Credentials) List(ctx context.Context, serviceID, keyword, status strin
 		return nil, 0, err
 	}
 	if status != "" && status != model.CredentialStatusActive && status != model.CredentialStatusRotating && status != model.CredentialStatusRevoked {
-		return nil, 0, fmt.Errorf("%w: status", ErrInvalidInput)
+		return nil, 0, Invalidf("状态")
 	}
 	list, total, err := s.store.ListCredentials(ctx, serviceID, keyword, status, page, limit)
 	if err != nil {
@@ -75,7 +74,7 @@ func (s *Credentials) List(ctx context.Context, serviceID, keyword, status strin
 func (s *Credentials) ensureServiceExists(ctx context.Context, serviceID string) error {
 	_, err := s.store.GetService(ctx, serviceID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: service", ErrNotFound)
+		return NotFoundf("服务")
 	}
 	return err
 }
@@ -98,14 +97,14 @@ func (s *Credentials) Create(ctx context.Context, serviceID string, in CreateCre
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" || len(name) > 128 {
-		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+		return nil, Invalidf("名称")
 	}
 	taken, err := s.store.ExistsCredentialName(ctx, serviceID, name, "")
 	if err != nil {
 		return nil, err
 	}
 	if taken {
-		return nil, fmt.Errorf("%w: name already exists", ErrConflict)
+		return nil, Conflictf("名称已存在")
 	}
 	codes, err := normalizeJobCodes(in.AllowedJobCodes)
 	if err != nil {
@@ -156,14 +155,14 @@ func (s *Credentials) Patch(ctx context.Context, serviceID, id string, in PatchC
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" || len(n) > 128 {
-			return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+			return nil, Invalidf("名称")
 		}
 		taken, err := s.store.ExistsCredentialName(ctx, serviceID, n, id)
 		if err != nil {
 			return nil, err
 		}
 		if taken {
-			return nil, fmt.Errorf("%w: name already exists", ErrConflict)
+			return nil, Conflictf("名称已存在")
 		}
 		p.Name = &n
 	}
@@ -216,7 +215,7 @@ func (s *Credentials) Rotate(ctx context.Context, serviceID, id string) (*model.
 		return nil, err
 	}
 	if cur.Status == model.CredentialStatusRevoked {
-		return nil, fmt.Errorf("%w: revoked credential", ErrInvalidInput)
+		return nil, Invalidf("凭据已吊销")
 	}
 	secret, err := auth.NewClientSecret()
 	if err != nil {
@@ -281,7 +280,7 @@ func normalizeJobCodes(in *[]string) (*[]string, error) {
 			continue
 		}
 		if len(s) > 128 {
-			return nil, fmt.Errorf("%w: job_code too long", ErrInvalidInput)
+			return nil, Invalidf("job_code 过长")
 		}
 		if _, ok := seen[s]; ok {
 			continue
@@ -304,7 +303,7 @@ func normalizeIPs(in *[]string) (*[]string, error) {
 			continue
 		}
 		if len(s) > 64 {
-			return nil, fmt.Errorf("%w: allowed_ips entry too long", ErrInvalidInput)
+			return nil, Invalidf("allowed_ips 条目过长")
 		}
 		if _, ok := seen[s]; ok {
 			continue

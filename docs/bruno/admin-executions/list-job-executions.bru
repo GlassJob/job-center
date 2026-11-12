@@ -1,0 +1,16 @@
+meta {
+  name: List job executions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/executions?status=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET .../jobs/:jobId/executions
+  任务维度执行列表。
+}

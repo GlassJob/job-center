@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/GlassJob/job-center/internal/model"
@@ -11,8 +10,6 @@ import (
 	"github.com/GlassJob/job-center/internal/pkg/idgen"
 	"github.com/GlassJob/job-center/internal/repository/mysql"
 )
-
-var ErrForbidden = errors.New("forbidden")
 
 type Clients struct {
 	store  *mysql.Store
@@ -38,7 +35,7 @@ type PatchClientInput struct {
 
 func (s *Clients) List(ctx context.Context, keyword, status string, page, limit int) ([]model.ClientView, int64, error) {
 	if status != "" && status != model.ClientStatusActive && status != model.ClientStatusRotating && status != model.ClientStatusRevoked {
-		return nil, 0, fmt.Errorf("%w: status", ErrInvalidInput)
+		return nil, 0, Invalidf("状态")
 	}
 	list, total, err := s.store.ListClients(ctx, keyword, status, page, limit)
 	if err != nil {
@@ -66,11 +63,11 @@ func (s *Clients) Get(ctx context.Context, id string) (*model.ClientView, error)
 func (s *Clients) Create(ctx context.Context, in CreateClientInput, createdBy string) (*model.ClientCreated, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" || len(name) > 128 {
-		return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+		return nil, Invalidf("名称")
 	}
 	desc := strings.TrimSpace(in.Description)
 	if len(desc) > 1000 {
-		return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+		return nil, Invalidf("描述")
 	}
 	scopes, err := normalizeScopes(in.Scopes)
 	if err != nil {
@@ -81,7 +78,7 @@ func (s *Clients) Create(ctx context.Context, in CreateClientInput, createdBy st
 		return nil, err
 	}
 	if taken {
-		return nil, fmt.Errorf("%w: name already exists", ErrConflict)
+		return nil, Conflictf("名称已存在")
 	}
 	secret, err := auth.NewClientSecret()
 	if err != nil {
@@ -118,21 +115,21 @@ func (s *Clients) Patch(ctx context.Context, id string, in PatchClientInput) (*m
 	if in.Name != nil {
 		n := strings.TrimSpace(*in.Name)
 		if n == "" || len(n) > 128 {
-			return nil, fmt.Errorf("%w: name", ErrInvalidInput)
+			return nil, Invalidf("名称")
 		}
 		taken, err := s.store.ExistsClientName(ctx, n, id)
 		if err != nil {
 			return nil, err
 		}
 		if taken {
-			return nil, fmt.Errorf("%w: name already exists", ErrConflict)
+			return nil, Conflictf("名称已存在")
 		}
 		p.Name = &n
 	}
 	if in.Description != nil {
 		d := strings.TrimSpace(*in.Description)
 		if len(d) > 1000 {
-			return nil, fmt.Errorf("%w: description", ErrInvalidInput)
+			return nil, Invalidf("描述")
 		}
 		p.Description = &d
 	}
@@ -140,7 +137,7 @@ func (s *Clients) Patch(ctx context.Context, id string, in PatchClientInput) (*m
 		st := strings.TrimSpace(*in.Status)
 		// PATCH 只允许 ACTIVE；吊销走 revoke，轮换走 rotate
 		if st != model.ClientStatusActive {
-			return nil, fmt.Errorf("%w: status (use revoke/rotate)", ErrInvalidInput)
+			return nil, Invalidf("请使用吊销/轮换接口变更状态")
 		}
 		cur, err := s.store.GetClientByID(ctx, id)
 		if errors.Is(err, mysql.ErrNotFound) {
@@ -150,7 +147,7 @@ func (s *Clients) Patch(ctx context.Context, id string, in PatchClientInput) (*m
 			return nil, err
 		}
 		if cur.Status == model.ClientStatusRevoked {
-			return nil, fmt.Errorf("%w: cannot reactivate revoked client", ErrInvalidInput)
+			return nil, Invalidf("已吊销的客户端不能重新激活")
 		}
 		p.Status = &st
 	}
@@ -181,7 +178,7 @@ func (s *Clients) Rotate(ctx context.Context, id string) (*model.ClientCreated, 
 		return nil, err
 	}
 	if cur.Status == model.ClientStatusRevoked {
-		return nil, fmt.Errorf("%w: revoked client", ErrInvalidInput)
+		return nil, Invalidf("客户端已吊销")
 	}
 	secret, err := auth.NewClientSecret()
 	if err != nil {
@@ -222,7 +219,7 @@ func (s *Clients) Revoke(ctx context.Context, id, revokedBy string) (*model.Clie
 			return nil, err
 		}
 		if n <= 1 {
-			return nil, fmt.Errorf("%w: cannot revoke the last ACTIVE client", ErrForbidden)
+			return nil, Forbiddenf("不能吊销最后一个可用客户端")
 		}
 	}
 	c, err := s.store.RevokeClient(ctx, id, revokedBy)
@@ -264,7 +261,7 @@ func (s *Clients) Delete(ctx context.Context, id, revokedBy string, hard bool) (
 			return nil, err
 		}
 		if n <= 1 {
-			return nil, fmt.Errorf("%w: cannot delete the last ACTIVE client", ErrForbidden)
+			return nil, Forbiddenf("不能删除最后一个可用客户端")
 		}
 	}
 	if err := s.store.DeleteClient(ctx, id); err != nil {
@@ -288,7 +285,7 @@ func normalizeScopes(in []string) ([]string, error) {
 			continue
 		}
 		if len(s) > 64 {
-			return nil, fmt.Errorf("%w: scope too long", ErrInvalidInput)
+			return nil, Invalidf("scope 过长")
 		}
 		if _, ok := seen[s]; ok {
 			continue

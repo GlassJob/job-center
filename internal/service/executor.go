@@ -501,7 +501,7 @@ func (s *Executor) HeartbeatWithSession(ctx context.Context, sess *Session, req 
 	}
 	status, err := s.store.HeartbeatInstance(ctx, sess.InstanceID, sess.SessionEpoch, uint(running), maxPtr, draining)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return nil, fmt.Errorf("%w: not registered", ErrNotFound)
+		return nil, NotFoundf("实例未注册")
 	}
 	if err != nil {
 		return nil, err

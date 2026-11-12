@@ -1,0 +1,16 @@
+meta {
+  name: List jobs (global)
+  type: http
+  seq: 0
+}
+
+get {
+  url: {{base_url}}/v1/admin/jobs?keyword=&service_id=&status=&enabled=&page=1&limit=20
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/jobs
+  全局任务列表，含 service_code/name、schedules[]、last_execution_*。
+}

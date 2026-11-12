@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/GlassJob/job-center/internal/model"
@@ -75,6 +76,97 @@ func (s *Store) GetInstance(ctx context.Context, id string) (*model.Instance, er
 		return nil, err
 	}
 	return &inst, nil
+}
+
+func (s *Store) GetInstanceInService(ctx context.Context, serviceID, id string) (*model.Instance, error) {
+	var inst model.Instance
+	err := s.db.WithContext(ctx).Where("id = ? AND service_id = ?", id, serviceID).First(&inst).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &inst, nil
+}
+
+// InstanceListRow 实例列表（可带服务展示字段）。
+type InstanceListRow struct {
+	model.Instance
+	ServiceCode string `gorm:"column:service_code"`
+	ServiceName string `gorm:"column:service_name"`
+}
+
+func (s *Store) ListInstances(ctx context.Context, serviceID, keyword, status string, page, limit int) ([]InstanceListRow, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	countQ := s.db.WithContext(ctx).Table("instances AS i")
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		countQ = countQ.Where("i.service_id = ?", sid)
+	}
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		like := "%" + kw + "%"
+		countQ = countQ.Where(
+			"i.id LIKE ? OR i.instance_key LIKE ? OR i.hostname LIKE ? OR i.ip_address LIKE ? OR EXISTS (SELECT 1 FROM services s WHERE s.id = i.service_id AND (s.code LIKE ? OR s.name LIKE ?))",
+			like, like, like, like, like, like,
+		)
+	}
+	if st := strings.TrimSpace(status); st != "" {
+		countQ = countQ.Where("i.status = ?", st)
+	}
+	var total int64
+	if err := countQ.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	q := s.db.WithContext(ctx).Table("instances AS i").
+		Select("i.*, COALESCE(s.code,'') AS service_code, COALESCE(s.name,'') AS service_name").
+		Joins("LEFT JOIN services AS s ON s.id = i.service_id")
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		q = q.Where("i.service_id = ?", sid)
+	}
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		like := "%" + kw + "%"
+		q = q.Where(
+			"i.id LIKE ? OR i.instance_key LIKE ? OR i.hostname LIKE ? OR i.ip_address LIKE ? OR s.code LIKE ? OR s.name LIKE ?",
+			like, like, like, like, like, like,
+		)
+	}
+	if st := strings.TrimSpace(status); st != "" {
+		q = q.Where("i.status = ?", st)
+	}
+	var list []InstanceListRow
+	err := q.Order("i.last_heartbeat_at DESC, i.created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Scan(&list).Error
+	if list == nil {
+		list = []InstanceListRow{}
+	}
+	return list, total, err
+}
+
+func (s *Store) ListInstanceJobViews(ctx context.Context, instanceID string) ([]model.InstanceJobView, error) {
+	var rows []model.InstanceJobView
+	err := s.db.WithContext(ctx).Table("instance_jobs AS ij").
+		Select("ij.job_id, j.code AS job_code, ij.handler_version, ij.max_concurrency, ij.registered_at").
+		Joins("LEFT JOIN jobs AS j ON j.id = ij.job_id").
+		Where("ij.instance_id = ?", instanceID).
+		Order("j.code ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []model.InstanceJobView{}
+	}
+	return rows, nil
 }
 
 type RegisterInstanceInput struct {

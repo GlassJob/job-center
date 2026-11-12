@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -36,7 +35,7 @@ type PatchJobStateInput struct {
 func (s *JobStates) ensureJob(ctx context.Context, serviceID, jobID string) error {
 	_, err := s.store.GetJob(ctx, serviceID, jobID)
 	if errors.Is(err, mysql.ErrNotFound) {
-		return fmt.Errorf("%w: job", ErrNotFound)
+		return NotFoundf("任务")
 	}
 	return err
 }
@@ -44,21 +43,21 @@ func (s *JobStates) ensureJob(ctx context.Context, serviceID, jobID string) erro
 func validateStateKey(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" || utf8.RuneCountInString(key) > 191 {
-		return fmt.Errorf("%w: key", ErrInvalidInput)
+		return Invalidf("键")
 	}
 	return nil
 }
 
 func validateStateValue(v map[string]any) error {
 	if v == nil {
-		return fmt.Errorf("%w: value required object", ErrInvalidInput)
+		return Invalidf("value 必须是 JSON 对象")
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("%w: value", ErrInvalidInput)
+		return Invalidf("值")
 	}
 	if len(b) > maxStateValueBytes {
-		return fmt.Errorf("%w: value too large", ErrInvalidInput)
+		return Invalidf("value 过大")
 	}
 	return nil
 }
@@ -109,7 +108,7 @@ func (s *JobStates) Create(ctx context.Context, serviceID, jobID string, in Crea
 		return nil, err
 	}
 	if taken {
-		return nil, fmt.Errorf("%w: key already exists", ErrConflict)
+		return nil, Conflictf("键已存在")
 	}
 	if updatedBy == "" {
 		updatedBy = "admin"
@@ -141,7 +140,7 @@ func (s *JobStates) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		return nil, err
 	}
 	if in.Version == nil {
-		return nil, fmt.Errorf("%w: version required for CAS", ErrInvalidInput)
+		return nil, Invalidf("缺少 version（乐观锁）")
 	}
 	if err := validateStateValue(in.Value); err != nil {
 		return nil, err
@@ -154,7 +153,7 @@ func (s *JobStates) Patch(ctx context.Context, serviceID, jobID, id string, in P
 		return nil, ErrNotFound
 	}
 	if errors.Is(err, mysql.ErrConflict) {
-		return nil, fmt.Errorf("%w: version mismatch", ErrConflict)
+		return nil, Conflictf("版本冲突，请刷新后重试")
 	}
 	if err != nil {
 		return nil, err

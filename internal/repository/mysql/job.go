@@ -41,6 +41,18 @@ func (s *Store) GetJob(ctx context.Context, serviceID, id string) (*model.Job, e
 	return &j, nil
 }
 
+func (s *Store) GetJobByID(ctx context.Context, id string) (*model.Job, error) {
+	var j model.Job
+	err := s.db.WithContext(ctx).Where("id = ?", id).First(&j).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &j, nil
+}
+
 func (s *Store) ExistsJobCode(ctx context.Context, serviceID, code, excludeID string) (bool, error) {
 	q := s.db.WithContext(ctx).Model(&model.Job{}).Where("service_id = ? AND code = ?", serviceID, code)
 	if excludeID != "" {
@@ -53,7 +65,14 @@ func (s *Store) ExistsJobCode(ctx context.Context, serviceID, code, excludeID st
 	return n > 0, nil
 }
 
-func (s *Store) ListJobs(ctx context.Context, serviceID, keyword, status string, enabled *bool, page, limit int) ([]model.Job, int64, error) {
+// JobListRow 任务列表（可带服务展示字段）。
+type JobListRow struct {
+	model.Job
+	ServiceCode string `gorm:"column:service_code"`
+	ServiceName string `gorm:"column:service_name"`
+}
+
+func (s *Store) ListJobs(ctx context.Context, serviceID, keyword, status string, enabled *bool, page, limit int) ([]JobListRow, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -63,24 +82,65 @@ func (s *Store) ListJobs(ctx context.Context, serviceID, keyword, status string,
 	if limit > 100 {
 		limit = 100
 	}
-	q := s.db.WithContext(ctx).Model(&model.Job{}).Where("service_id = ?", serviceID)
+	countQ := s.db.WithContext(ctx).Table("jobs AS j")
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		countQ = countQ.Where("j.service_id = ?", sid)
+	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		like := "%" + kw + "%"
-		q = q.Where("id LIKE ? OR code LIKE ? OR name LIKE ?", like, like, like)
+		countQ = countQ.Where(
+			"j.id LIKE ? OR j.code LIKE ? OR j.name LIKE ? OR j.handler LIKE ? OR EXISTS (SELECT 1 FROM services s WHERE s.id = j.service_id AND (s.code LIKE ? OR s.name LIKE ?))",
+			like, like, like, like, like, like,
+		)
 	}
 	if st := strings.TrimSpace(status); st != "" {
-		q = q.Where("status = ?", st)
+		countQ = countQ.Where("j.status = ?", st)
 	}
 	if enabled != nil {
-		q = q.Where("enabled = ?", *enabled)
+		countQ = countQ.Where("j.enabled = ?", *enabled)
 	}
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := countQ.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	var list []model.Job
-	err := q.Order("created_at DESC").Limit(limit).Offset((page - 1) * limit).Find(&list).Error
+
+	q := s.db.WithContext(ctx).Table("jobs AS j").
+		Select("j.*, COALESCE(s.code,'') AS service_code, COALESCE(s.name,'') AS service_name").
+		Joins("LEFT JOIN services AS s ON s.id = j.service_id")
+	if sid := strings.TrimSpace(serviceID); sid != "" {
+		q = q.Where("j.service_id = ?", sid)
+	}
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		like := "%" + kw + "%"
+		q = q.Where(
+			"j.id LIKE ? OR j.code LIKE ? OR j.name LIKE ? OR j.handler LIKE ? OR s.code LIKE ? OR s.name LIKE ?",
+			like, like, like, like, like, like,
+		)
+	}
+	if st := strings.TrimSpace(status); st != "" {
+		q = q.Where("j.status = ?", st)
+	}
+	if enabled != nil {
+		q = q.Where("j.enabled = ?", *enabled)
+	}
+	var list []JobListRow
+	err := q.Order("j.created_at DESC").Limit(limit).Offset((page - 1) * limit).Scan(&list).Error
+	if list == nil {
+		list = []JobListRow{}
+	}
 	return list, total, err
+}
+
+func (s *Store) ListSchedulesByJobIDs(ctx context.Context, jobIDs []string) ([]model.Schedule, error) {
+	if len(jobIDs) == 0 {
+		return []model.Schedule{}, nil
+	}
+	var list []model.Schedule
+	err := s.db.WithContext(ctx).Where("job_id IN ?", jobIDs).Order("created_at ASC").Find(&list).Error
+	if list == nil {
+		list = []model.Schedule{}
+	}
+	return list, err
 }
 
 type JobPatch struct {

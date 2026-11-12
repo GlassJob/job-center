@@ -1,0 +1,17 @@
+meta {
+  name: Regenerate all schedules
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/admin/scheduler/regenerate
+  body: none
+  auth: none
+}
+
+docs {
+  # POST /v1/admin/scheduler/regenerate
+  全平台 enabled+cron 排班逐个先删再插（同步）。返回 total / succeeded / failed / errors。
+  权限 job.schedule.manage。
+}

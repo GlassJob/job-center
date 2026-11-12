@@ -133,7 +133,7 @@ func (c *Conn) handle(ctx context.Context, raw []byte) error {
 		return c.onUnregister(ctx, env)
 	case protocol.TypeTaskExecuteAck, protocol.TypeTaskStarted, protocol.TypeTaskProgress,
 		protocol.TypeTaskLog, protocol.TypeTaskCheckpoint, protocol.TypeTaskCompleted, protocol.TypeTaskFailed,
-		protocol.TypeTaskCancelAck, protocol.TypeTaskCancelled:
+		protocol.TypeTaskCancelAck, protocol.TypeTaskCancelled, protocol.TypeTaskSyncRunning:
 		return c.onTask(ctx, env)
 	default:
 		return c.sendError(protocol.ErrNotImplemented, "unsupported message type", false, env.MessageID)
@@ -229,6 +229,9 @@ func (c *Conn) onHeartbeat(ctx context.Context, env *protocol.Envelope) error {
 		}
 		return c.sendError("HEARTBEAT_FAILED", err.Error(), true, env.MessageID)
 	}
+	if c.executions != nil {
+		c.executions.RenewLeasesForInstance(ctx, sess.InstanceID)
+	}
 	return c.reply(protocol.TypeServiceHeartbeatAck, env.MessageID, ack)
 }
 
@@ -282,13 +285,13 @@ func (c *Conn) onTask(ctx context.Context, env *protocol.Envelope) error {
 		if err := json.Unmarshal(env.Data, &m); err != nil {
 			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid log", false, env.MessageID)
 		}
-		ack = c.executions.OnLogOrCheckpoint(ctx, sess.InstanceID, m.AttemptID, m.LeaseToken)
+		ack = c.executions.OnLog(ctx, sess.InstanceID, m)
 	case protocol.TypeTaskCheckpoint:
 		var m protocol.TaskCheckpoint
 		if err := json.Unmarshal(env.Data, &m); err != nil {
 			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid checkpoint", false, env.MessageID)
 		}
-		ack = c.executions.OnLogOrCheckpoint(ctx, sess.InstanceID, m.AttemptID, m.LeaseToken)
+		ack = c.executions.OnCheckpoint(ctx, sess.InstanceID, m)
 	case protocol.TypeTaskCompleted:
 		var m protocol.TaskCompleted
 		if err := json.Unmarshal(env.Data, &m); err != nil {
@@ -313,6 +316,12 @@ func (c *Conn) onTask(ctx context.Context, env *protocol.Envelope) error {
 			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid cancelled", false, env.MessageID)
 		}
 		ack = c.executions.OnCancelled(ctx, sess.InstanceID, m)
+	case protocol.TypeTaskSyncRunning:
+		var m protocol.TaskSyncRunning
+		if err := json.Unmarshal(env.Data, &m); err != nil {
+			return c.sendError(protocol.ErrProtocolInvalidMessage, "invalid sync_running", false, env.MessageID)
+		}
+		return c.reply(protocol.TypeTaskSyncRunningAck, env.MessageID, c.executions.SyncRunning(ctx, sess.InstanceID, m))
 	}
 	if ack != nil {
 		return c.reply(protocol.TypeTaskResultAck, env.MessageID, ack)

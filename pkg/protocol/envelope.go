@@ -53,12 +53,12 @@ var ExecutorToCenter = map[string]bool{
 	TypeAuthRequest: true, TypeServiceRegister: true, TypeServiceHeartbeat: true, TypeServiceUnregister: true,
 	TypeTaskExecuteAck: true, TypeTaskStarted: true, TypeTaskProgress: true, TypeTaskLog: true,
 	TypeTaskCheckpoint: true, TypeTaskCompleted: true, TypeTaskFailed: true,
-	TypeTaskCancelAck: true, TypeTaskCancelled: true,
+	TypeTaskCancelAck: true, TypeTaskCancelled: true, TypeTaskSyncRunning: true,
 }
 
 var CenterToExecutor = map[string]bool{
 	TypeAuthResponse: true, TypeServiceRegisterAck: true, TypeServiceHeartbeatAck: true,
-	TypeTaskExecute: true, TypeTaskResultAck: true, TypeTaskCancel: true,
+	TypeTaskExecute: true, TypeTaskResultAck: true, TypeTaskCancel: true, TypeTaskSyncRunningAck: true,
 	TypeSystemError: true, TypeSystemNotice: true,
 }
 
@@ -70,6 +70,7 @@ var KnownTypes = map[string]bool{
 	TypeTaskExecute: true, TypeTaskExecuteAck: true, TypeTaskStarted: true, TypeTaskProgress: true,
 	TypeTaskLog: true, TypeTaskCheckpoint: true, TypeTaskCompleted: true, TypeTaskFailed: true,
 	TypeTaskResultAck: true, TypeTaskCancel: true, TypeTaskCancelAck: true, TypeTaskCancelled: true,
+	TypeTaskSyncRunning: true, TypeTaskSyncRunningAck: true,
 	TypeSystemError: true, TypeSystemNotice: true,
 }
 

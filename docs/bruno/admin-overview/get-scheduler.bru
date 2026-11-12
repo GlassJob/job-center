@@ -1,0 +1,16 @@
+meta {
+  name: Get scheduler status
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/v1/admin/scheduler
+  body: none
+  auth: none
+}
+
+docs {
+  # GET /v1/admin/scheduler
+  只读：Claim / Generate / Queued 三循环工作相位（IDLE|RUNNING|SLEEPING|DISABLED|STOPPED）。
+}

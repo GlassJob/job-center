@@ -1,0 +1,16 @@
+meta {
+  name: Regenerate schedule triggers
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{base_url}}/v1/admin/services/{{service_id}}/jobs/{{job_id}}/schedules/{{schedule_id}}/regenerate
+  body: none
+  auth: none
+}
+
+docs {
+  # POST /v1/admin/services/:serviceId/jobs/:jobId/schedules/:scheduleId/regenerate
+  单排班先删再插；需已启用且有 Cron。权限 job.schedule.manage。
+}
