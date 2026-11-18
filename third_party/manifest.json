@@ -149,10 +149,6 @@
       "sum": "h1:oUp34TzMlL+OY1OUWxHqsdkgC/Zfc85zGqw9siXjrc0=",
       "evidence": [
         {
-          "path": "third_party/licenses/github.com/bytedance/sonic/v1.11.6/.github/workflows/license-check.yml",
-          "sha256": "dd788c3f75ad967266b5ec01cf5a95fc908c4f847f986fa3a44f54cf9a7c2ade"
-        },
-        {
           "path": "third_party/licenses/github.com/bytedance/sonic/v1.11.6/LICENSE",
           "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
         },

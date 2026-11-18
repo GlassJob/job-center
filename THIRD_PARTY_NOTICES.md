@@ -35,7 +35,7 @@
 | `gorm.io/driver/mysql` | `v1.5.7` | MIT | [original files](third_party/licenses/gorm.io/driver/mysql/v1.5.7/) |
 | `gorm.io/gorm` | `v1.25.12` | MIT | [original files](third_party/licenses/gorm.io/gorm/v1.25.12/) |
 | `filippo.io/edwards25519` | `v1.1.0` | BSD-3-Clause | [original files](third_party/licenses/filippo.io/edwards25519/v1.1.0/) |
-| `github.com/bytedance/sonic` | `v1.11.6` | Apache-2.0 | [original files](third_party/licenses/github.com/bytedance/sonic/v1.11.6/.github/workflows/) |
+| `github.com/bytedance/sonic` | `v1.11.6` | Apache-2.0 | [original files](third_party/licenses/github.com/bytedance/sonic/v1.11.6/) |
 | `github.com/bytedance/sonic/loader` | `v0.1.1` | Apache-2.0 | [original files](third_party/licenses/github.com/bytedance/sonic/loader/v0.1.1/) |
 | `github.com/cloudwego/base64x` | `v0.1.4` | Apache-2.0 | [original files](third_party/licenses/github.com/cloudwego/base64x/v0.1.4/) |
 | `github.com/cloudwego/iasm` | `v0.2.0` | Apache-2.0 | [original files](third_party/licenses/github.com/cloudwego/iasm/v0.2.0/) |
