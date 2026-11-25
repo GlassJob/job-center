@@ -4,13 +4,34 @@ import "time"
 
 // Overview 管理端运行概览聚合。
 type Overview struct {
-	ServiceCount     int64                    `json:"service_count"`
-	JobCount         int64                    `json:"job_count"`
-	EnabledJobCount  int64                    `json:"enabled_job_count"`
-	InstanceCounts   OverviewInstanceCounts   `json:"instance_counts"`
-	ExecutionToday   OverviewExecutionToday   `json:"execution_today"`
-	Upcoming         []OverviewUpcomingItem   `json:"upcoming"`
-	RecentFailed     []OverviewFailedItem     `json:"recent_failed"`
+	ServiceCount        int64                       `json:"service_count"`
+	JobCount            int64                       `json:"job_count"`
+	EnabledJobCount     int64                       `json:"enabled_job_count"`
+	InstanceCounts      OverviewInstanceCounts      `json:"instance_counts"`
+	ExecutionToday      OverviewExecutionToday      `json:"execution_today"`
+	ExecutionDays       []OverviewExecutionDay      `json:"execution_days"`
+	Upcoming            []OverviewUpcomingItem      `json:"upcoming"`
+	RecentFailed        []OverviewFailedItem        `json:"recent_failed"`
+	UnhealthyInstances  []OverviewUnhealthyInstance `json:"unhealthy_instances"`
+}
+
+// OverviewExecutionDay 一个 UTC 日的执行计数。
+type OverviewExecutionDay struct {
+	Date    string `json:"date"`
+	Total   int64  `json:"total"`
+	Success int64  `json:"success"`
+	Failed  int64  `json:"failed"`
+}
+
+// OverviewUnhealthyInstance 非在线执行器摘要。
+type OverviewUnhealthyInstance struct {
+	ID              string     `json:"id"`
+	InstanceKey     string     `json:"instance_key"`
+	Status          string     `json:"status"`
+	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
+	ServiceID       string     `json:"service_id"`
+	ServiceCode     string     `json:"service_code"`
+	ServiceName     string     `json:"service_name"`
 }
 
 type OverviewInstanceCounts struct {

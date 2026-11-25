@@ -80,6 +80,9 @@ func run() error {
 	if app.SchedulerHandler != nil {
 		app.SchedulerHandler.Scheduler = sch
 	}
+	if app.OverviewHandler != nil {
+		app.OverviewHandler.Scheduler = sch
+	}
 	go sch.Start(ctx)
 
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: app.Engine}

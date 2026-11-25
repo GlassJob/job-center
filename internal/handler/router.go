@@ -31,6 +31,7 @@ type App struct {
 	Executions       *service.Executions
 	Schedules        *service.Schedules
 	SchedulerHandler *admin.SchedulerHandler
+	OverviewHandler  *admin.OverviewHandler
 }
 
 func NewRouter(d Deps) *App {
@@ -135,5 +136,5 @@ func NewRouter(d Deps) *App {
 	}
 
 	r.GET("/v1/executor/ws", gw.GinHandler())
-	return &App{Engine: r, Hub: hub, Executions: executions, Schedules: schedules, SchedulerHandler: schStatusH}
+	return &App{Engine: r, Hub: hub, Executions: executions, Schedules: schedules, SchedulerHandler: schStatusH, OverviewHandler: ovH}
 }

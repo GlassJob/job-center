@@ -50,7 +50,53 @@ func (s *Store) GetServiceDetail(ctx context.Context, id string) (*model.Service
 	if tx.RowsAffected == 0 {
 		return nil, ErrNotFound
 	}
+	if err := s.fillServiceInstanceSummary(ctx, &d); err != nil {
+		return nil, err
+	}
 	return &d, nil
+}
+
+func (s *Store) fillServiceInstanceSummary(ctx context.Context, d *model.ServiceDetail) error {
+	type statusCount struct {
+		Status string `gorm:"column:status"`
+		Cnt    int64  `gorm:"column:cnt"`
+	}
+	var rows []statusCount
+	if err := s.db.WithContext(ctx).Model(&model.Instance{}).
+		Select("status, COUNT(*) AS cnt").
+		Where("service_id = ?", d.ID).
+		Group("status").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, r := range rows {
+		switch r.Status {
+		case model.InstanceStatusRegistering:
+			d.InstanceCounts.Registering = r.Cnt
+		case model.InstanceStatusOnline:
+			d.InstanceCounts.Online = r.Cnt
+		case model.InstanceStatusSuspect:
+			d.InstanceCounts.Suspect = r.Cnt
+		case model.InstanceStatusOffline:
+			d.InstanceCounts.Offline = r.Cnt
+		case model.InstanceStatusDraining:
+			d.InstanceCounts.Draining = r.Cnt
+		}
+	}
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT i.id, i.instance_key, i.status, i.last_heartbeat_at,
+			i.service_id, COALESCE(svc.code,'') AS service_code, COALESCE(svc.name,'') AS service_name
+		FROM instances i
+		LEFT JOIN services svc ON svc.id = i.service_id
+		WHERE i.service_id = ? AND i.status <> ?
+		ORDER BY i.updated_at DESC
+		LIMIT 8`, d.ID, model.InstanceStatusOnline).Scan(&d.UnhealthyInstances).Error; err != nil {
+		return err
+	}
+	if d.UnhealthyInstances == nil {
+		d.UnhealthyInstances = []model.OverviewUnhealthyInstance{}
+	}
+	return nil
 }
 
 func (s *Store) ListServices(ctx context.Context, keyword string, page, limit int) ([]model.ServiceDetail, int64, error) {

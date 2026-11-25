@@ -167,6 +167,41 @@ func (s *Jobs) Get(ctx context.Context, serviceID, id string) (*model.JobView, e
 		return nil, err
 	}
 	v := j.View()
+	if svc, err := s.store.GetService(ctx, j.ServiceID); err == nil {
+		v.ServiceCode = svc.Code
+		v.ServiceName = svc.Name
+	} else if err != nil && !errors.Is(err, mysql.ErrNotFound) {
+		return nil, err
+	}
+	schedules, err := s.store.ListSchedulesByJobIDs(ctx, []string{j.ID})
+	if err != nil {
+		return nil, err
+	}
+	v.Schedules = make([]model.ScheduleSummary, 0, len(schedules))
+	for i := range schedules {
+		sch := schedules[i]
+		v.Schedules = append(v.Schedules, model.ScheduleSummary{
+			ID: sch.ID, Code: sch.Code, Name: sch.Name, Enabled: sch.Enabled,
+			CronExpression: sch.CronExpression, Timezone: sch.Timezone,
+			NextFireAt: sch.NextFireAt, LastFireAt: sch.LastFireAt,
+		})
+	}
+	rows, _, err := s.store.ListExecutions(ctx, mysql.ListExecutionsFilter{
+		ServiceID: serviceID, JobID: id, Page: 1, Limit: 5,
+	})
+	if err != nil {
+		return nil, err
+	}
+	v.RecentExecutions = make([]model.ExecutionView, 0, len(rows))
+	for i := range rows {
+		ev := rows[i].View(nil)
+		ev.JobName = rows[i].JobName
+		ev.ServiceCode = rows[i].ServiceCode
+		ev.ServiceName = rows[i].ServiceName
+		ev.Params = nil
+		ev.Result = nil
+		v.RecentExecutions = append(v.RecentExecutions, ev)
+	}
 	return &v, nil
 }
 

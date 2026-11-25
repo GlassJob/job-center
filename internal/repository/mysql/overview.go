@@ -9,8 +9,10 @@ import (
 
 func (s *Store) GetOverview(ctx context.Context) (*model.Overview, error) {
 	out := &model.Overview{
-		Upcoming:     []model.OverviewUpcomingItem{},
-		RecentFailed: []model.OverviewFailedItem{},
+		Upcoming:           []model.OverviewUpcomingItem{},
+		RecentFailed:       []model.OverviewFailedItem{},
+		ExecutionDays:      []model.OverviewExecutionDay{},
+		UnhealthyInstances: []model.OverviewUnhealthyInstance{},
 	}
 	db := s.db.WithContext(ctx)
 
@@ -110,6 +112,53 @@ func (s *Store) GetOverview(ctx context.Context) (*model.Overview, error) {
 	}
 	if out.RecentFailed == nil {
 		out.RecentFailed = []model.OverviewFailedItem{}
+	}
+
+	windowStart := dayStart.AddDate(0, 0, -6)
+	type dayAgg struct {
+		Day     string `gorm:"column:day"`
+		Total   int64  `gorm:"column:total"`
+		Success int64  `gorm:"column:success"`
+		Failed  int64  `gorm:"column:failed"`
+	}
+	var aggs []dayAgg
+	if err := db.Raw(`
+		SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
+			COUNT(*) AS total,
+			CAST(COALESCE(SUM(status = ?), 0) AS SIGNED) AS success,
+			CAST(COALESCE(SUM(status IN (?, ?)), 0) AS SIGNED) AS failed
+		FROM executions
+		WHERE created_at >= ? AND created_at < ?
+		GROUP BY DATE_FORMAT(created_at, '%Y-%m-%d')`,
+		model.ExecStatusSucceeded, model.ExecStatusFailed, model.ExecStatusTimedOut, windowStart, dayEnd,
+	).Scan(&aggs).Error; err != nil {
+		return nil, err
+	}
+	byDay := map[string]dayAgg{}
+	for _, row := range aggs {
+		byDay[row.Day] = row
+	}
+	out.ExecutionDays = make([]model.OverviewExecutionDay, 0, 7)
+	for i := 0; i < 7; i++ {
+		day := windowStart.AddDate(0, 0, i).Format("2006-01-02")
+		row := byDay[day]
+		out.ExecutionDays = append(out.ExecutionDays, model.OverviewExecutionDay{
+			Date: day, Total: row.Total, Success: row.Success, Failed: row.Failed,
+		})
+	}
+
+	if err := db.Raw(`
+		SELECT i.id, i.instance_key, i.status, i.last_heartbeat_at,
+			i.service_id, COALESCE(svc.code,'') AS service_code, COALESCE(svc.name,'') AS service_name
+		FROM instances i
+		LEFT JOIN services svc ON svc.id = i.service_id
+		WHERE i.status <> ?
+		ORDER BY i.updated_at DESC
+		LIMIT 8`, model.InstanceStatusOnline).Scan(&out.UnhealthyInstances).Error; err != nil {
+		return nil, err
+	}
+	if out.UnhealthyInstances == nil {
+		out.UnhealthyInstances = []model.OverviewUnhealthyInstance{}
 	}
 	return out, nil
 }

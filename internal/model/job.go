@@ -72,6 +72,7 @@ type JobView struct {
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 	Schedules             []ScheduleSummary `json:"schedules,omitempty"`
+	RecentExecutions      []ExecutionView   `json:"recent_executions,omitempty"`
 	LastExecutionID       *string           `json:"last_execution_id,omitempty"`
 	LastExecutionStatus   string            `json:"last_execution_status,omitempty"`
 	LastExecutionAt       *time.Time        `json:"last_execution_at,omitempty"`
