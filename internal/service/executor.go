@@ -526,7 +526,10 @@ func (s *Executor) Disconnect(ctx context.Context, sess *Session) error {
 	if sess == nil || sess.InstanceID == "" {
 		return nil
 	}
-	return s.store.MarkInstanceDisconnected(ctx, sess.InstanceID, sess.SessionEpoch, model.InstanceStatusOffline)
+	if err := s.store.MarkInstanceDisconnected(ctx, sess.InstanceID, sess.SessionEpoch, model.InstanceStatusOffline); err != nil {
+		return err
+	}
+	return nil
 }
 
 func parseRFC3339(raw string) *time.Time {

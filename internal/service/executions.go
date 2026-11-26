@@ -450,6 +450,106 @@ func (s *Executions) ListLogs(ctx context.Context, serviceID, jobID, executionID
 	return out, nil
 }
 
+const maxExecutorLossRequeues = 8
+
+// RecoverAbandoned 把执行器掉线后仍停在派发中的尝试退回队列，便于上线后重新派发。
+func (s *Executions) RecoverAbandoned(ctx context.Context, limit int) (int, error) {
+	list, err := s.store.ListAbandonedAttempts(ctx, time.Now().UTC(), limit)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range list {
+		if err := s.requeueLostAttempt(ctx, &list[i], "EXECUTOR_OFFLINE"); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+// ReleaseUndeclaredAttempts 重连同步后，执行器没有申报的在途尝试视为已丢失。
+func (s *Executions) ReleaseUndeclaredAttempts(ctx context.Context, instanceID string, declared []string) (int, error) {
+	if instanceID == "" {
+		return 0, nil
+	}
+	keep := map[string]struct{}{}
+	for _, id := range declared {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			keep[id] = struct{}{}
+		}
+	}
+	list, err := s.store.ListActiveAttemptsForInstance(ctx, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range list {
+		if _, ok := keep[list[i].ID]; ok {
+			continue
+		}
+		if list[i].Status != model.AttemptDispatching && list[i].Status != model.AttemptAcknowledged && list[i].Status != model.AttemptRunning {
+			continue
+		}
+		if err := s.requeueLostAttempt(ctx, &list[i], "EXECUTOR_RESYNC"); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (s *Executions) requeueLostAttempt(ctx context.Context, a *model.Attempt, reason string) error {
+	if a == nil {
+		return nil
+	}
+	switch a.Status {
+	case model.AttemptSucceeded, model.AttemptFailed, model.AttemptCancelled, model.AttemptTimedOut, model.AttemptLost:
+		return nil
+	}
+	now := time.Now().UTC()
+	if err := s.store.UpdateAttemptFields(ctx, a.ID, map[string]any{
+		"status":        model.AttemptLost,
+		"status_reason": reason,
+		"lost_at":       now,
+		"finished_at":   now,
+	}); err != nil {
+		return err
+	}
+	exec, err := s.store.GetExecution(ctx, a.ExecutionID)
+	if errors.Is(err, mysql.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if exec.CurrentAttemptID != nil && *exec.CurrentAttemptID != "" && *exec.CurrentAttemptID != a.ID {
+		return nil
+	}
+	switch exec.Status {
+	case model.ExecStatusSucceeded, model.ExecStatusFailed, model.ExecStatusCancelled, model.ExecStatusTimedOut, model.ExecStatusSkipped:
+		return nil
+	}
+	if exec.AttemptCount >= maxExecutorLossRequeues {
+		return s.store.UpdateExecutionFields(ctx, exec.ID, map[string]any{
+			"status":        model.ExecStatusFailed,
+			"status_reason": reason,
+			"error_code":    reason,
+			"error_message": "执行器反复掉线，停止重派",
+			"finished_at":   now,
+		})
+	}
+	if a.Status == model.AttemptRunning && a.InstanceID != nil {
+		_ = s.store.AdjustInstanceRunning(ctx, *a.InstanceID, -1)
+	}
+	return s.store.UpdateExecutionFields(ctx, exec.ID, map[string]any{
+		"status":        model.ExecStatusQueued,
+		"status_reason": reason,
+		"queued_at":     now,
+	})
+}
+
 // DispatchQueued 扫 QUEUED executions，有容量则派发。
 func (s *Executions) DispatchQueued(ctx context.Context, limit int) (int, error) {
 	list, err := s.store.ListQueuedExecutions(ctx, limit)
@@ -1156,6 +1256,11 @@ func (s *Executions) SyncRunning(ctx context.Context, instanceID string, msg pro
 		res.LeaseExpiresAt = protocol.FormatTime(until)
 		out.Results = append(out.Results, res)
 	}
+	declared := make([]string, 0, len(msg.Attempts))
+	for _, item := range msg.Attempts {
+		declared = append(declared, item.AttemptID)
+	}
+	_, _ = s.ReleaseUndeclaredAttempts(ctx, instanceID, declared)
 	s.reconcileInstanceRunning(ctx, instanceID)
 	return out
 }

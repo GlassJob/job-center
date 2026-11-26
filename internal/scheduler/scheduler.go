@@ -448,13 +448,18 @@ func (s *Scheduler) runQueued(ctx context.Context) string {
 	if batch < 1 {
 		batch = 50
 	}
+	recovered, err := s.executions.RecoverAbandoned(ctx, batch)
+	if err != nil {
+		s.log.Error("recover abandoned", "err", err)
+		return "error"
+	}
 	n, err := s.executions.DispatchQueued(ctx, batch)
 	if err != nil {
 		s.log.Error("dispatch queued", "err", err)
 		return "error"
 	}
-	if n > 0 {
-		s.log.Info("queued dispatched", "count", n)
+	if recovered > 0 || n > 0 {
+		s.log.Info("queued dispatched", "recovered", recovered, "count", n)
 	}
-	return "dispatched=" + strconv.Itoa(n)
+	return "recovered=" + strconv.Itoa(recovered) + " dispatched=" + strconv.Itoa(n)
 }

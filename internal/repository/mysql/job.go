@@ -226,13 +226,45 @@ func (s *Store) CountJobDependents(ctx context.Context, jobID string) (JobDepend
 	return r, err
 }
 
+type OnlineJobExecutor struct {
+	ID          string `gorm:"column:id"`
+	InstanceKey string `gorm:"column:instance_key"`
+}
+
+func (s *Store) ListOnlineExecutorsForJob(ctx context.Context, jobID string) ([]OnlineJobExecutor, error) {
+	var list []OnlineJobExecutor
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT i.id, i.instance_key
+		FROM instance_jobs ij
+		INNER JOIN instances i ON i.id = ij.instance_id
+		WHERE ij.job_id = ? AND i.status = ?
+		ORDER BY i.instance_key`, jobID, model.InstanceStatusOnline).Scan(&list).Error
+	if list == nil {
+		list = []OnlineJobExecutor{}
+	}
+	return list, err
+}
+
 func (s *Store) DeleteJob(ctx context.Context, serviceID, id string) error {
-	res := s.db.WithContext(ctx).Where("id = ? AND service_id = ?", id, serviceID).Delete(&model.Job{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, stmt := range []string{
+			`DELETE FROM schedule_triggers WHERE job_id = ?`,
+			`DELETE FROM schedules WHERE job_id = ?`,
+			`DELETE FROM job_states WHERE job_id = ?`,
+			`DELETE FROM job_versions WHERE job_id = ?`,
+			`DELETE FROM instance_jobs WHERE job_id = ?`,
+		} {
+			if err := tx.Exec(stmt, id).Error; err != nil {
+				return err
+			}
+		}
+		res := tx.Where("id = ? AND service_id = ?", id, serviceID).Delete(&model.Job{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }

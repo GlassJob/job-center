@@ -436,6 +436,11 @@ func (c *Conn) cleanup(ctx context.Context) {
 			if err := c.exec.Disconnect(context.WithoutCancel(ctx), sess); err != nil {
 				c.log.Warn("disconnect update failed", "err", err)
 			}
+			if c.executions != nil {
+				if _, err := c.executions.RecoverAbandoned(context.WithoutCancel(ctx), 100); err != nil {
+					c.log.Warn("recover abandoned", "err", err)
+				}
+			}
 		}
 	}
 }

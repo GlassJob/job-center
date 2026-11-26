@@ -343,12 +343,20 @@ func (s *Jobs) Delete(ctx context.Context, serviceID, id string, hard bool) (*De
 		v := j.View()
 		return &DeleteJobResult{Hard: false, Job: &v}, nil
 	}
-	deps, err := s.store.CountJobDependents(ctx, id)
+	online, err := s.store.ListOnlineExecutorsForJob(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if deps.Total() > 0 {
-		return nil, Conflictf("任务仍有依赖资源（versions=%d schedules=%d states=%d instance_jobs=%d executions=%d）", deps.Versions, deps.Schedules, deps.States, deps.InstanceJobs, deps.Executions)
+	if len(online) > 0 {
+		names := make([]string, 0, len(online))
+		for _, item := range online {
+			if item.InstanceKey != "" {
+				names = append(names, item.InstanceKey)
+			} else {
+				names = append(names, item.ID)
+			}
+		}
+		return nil, Conflictf("有在线执行器仍注册了该任务，不能删除：%s", strings.Join(names, "、"))
 	}
 	if err := s.store.DeleteJob(ctx, serviceID, id); err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {

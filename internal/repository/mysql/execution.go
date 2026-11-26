@@ -260,16 +260,59 @@ var activeAttemptStatuses = []string{
 	model.AttemptRunning,
 }
 
-// RenewAttemptLeasesForInstance 心跳续租该实例上非终态 attempts。
+var undispatchedAttemptStatuses = []string{
+	model.AttemptDispatching,
+	model.AttemptAcknowledged,
+}
+
+// RenewAttemptLeasesForInstance 心跳只续租执行器已确认在跑的 attempts。
+// 派发中尚未 ack 的尝试不续租，避免执行器重启后把丢失的派发一直续下去。
 func (s *Store) RenewAttemptLeasesForInstance(ctx context.Context, instanceID string, until time.Time) (int64, error) {
 	now := time.Now().UTC()
 	res := s.db.WithContext(ctx).Model(&model.Attempt{}).
-		Where("instance_id = ? AND status IN ?", instanceID, activeAttemptStatuses).
+		Where("instance_id = ? AND status = ?", instanceID, model.AttemptRunning).
 		Updates(map[string]any{
 			"lease_expires_at":  until,
 			"last_heartbeat_at": now,
 		})
 	return res.RowsAffected, res.Error
+}
+
+// ListAbandonedAttempts 尚未真正跑起来、且执行器已离线或租约过期的尝试。
+func (s *Store) ListAbandonedAttempts(ctx context.Context, now time.Time, limit int) ([]model.Attempt, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	var list []model.Attempt
+	err := s.db.WithContext(ctx).
+		Model(&model.Attempt{}).
+		Joins("LEFT JOIN instances i ON i.id = execution_attempts.instance_id").
+		Where(`execution_attempts.status IN ? AND (
+			execution_attempts.lease_expires_at IS NULL
+			OR execution_attempts.lease_expires_at < ?
+			OR i.id IS NULL
+			OR i.status <> ?
+		)`, undispatchedAttemptStatuses, now, model.InstanceStatusOnline).
+		Or(`execution_attempts.status = ? AND (execution_attempts.lease_expires_at IS NULL OR execution_attempts.lease_expires_at < ?)`,
+			model.AttemptRunning, now).
+		Order("execution_attempts.dispatched_at ASC").
+		Limit(limit).
+		Find(&list).Error
+	if list == nil {
+		list = []model.Attempt{}
+	}
+	return list, err
+}
+
+func (s *Store) ListActiveAttemptsForInstance(ctx context.Context, instanceID string) ([]model.Attempt, error) {
+	var list []model.Attempt
+	err := s.db.WithContext(ctx).
+		Where("instance_id = ? AND status IN ?", instanceID, activeAttemptStatuses).
+		Find(&list).Error
+	if list == nil {
+		list = []model.Attempt{}
+	}
+	return list, err
 }
 
 func (s *Store) CountActiveAttemptsForInstance(ctx context.Context, instanceID string) (int64, error) {
